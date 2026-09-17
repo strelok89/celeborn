@@ -175,7 +175,7 @@ tests:
           pattern: metrics_DeviceCelebornFreeBytes_Value\{role="Worker"\}
       - equal:
           path: spec.triggers[0].metadata.threshold
-          value: "0.75"
+          value: "0.70"
       - equal:
           path: spec.triggers[1].metricType
           value: AverageValue

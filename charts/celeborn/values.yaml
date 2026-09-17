@@ -279,16 +279,19 @@ worker:
     diskUsage:
       # -- Whether to add the disk usage trigger.
       enabled: true
-      # -- Fraction of the worker's Celeborn disk capacity in use, between 0 and 1.
-      threshold: "0.75"
+      # -- Fraction of the worker's Celeborn disk capacity in use, between 0 and 1. This is
+      # also the closest thing to a slot utilization target: Celeborn derives a disk's
+      # `maxSlots` from its total space, so the two track each other. See README.md.
+      threshold: "0.70"
 
     # Scale out when workers are holding too many slots each.
     activeSlots:
       # -- Whether to add the active slots trigger.
       enabled: true
-      # -- Target active slots per worker. Deployment-specific, so tune it: watch
+      # -- Target active slots per worker, as an absolute count. It cannot be a percentage:
+      # no metric exports a worker's slot capacity. Deployment-specific, so tune it: watch
       # `sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number
-      # of workers you want at that peak.
+      # of workers you want at that peak. See README.md.
       threshold: "500"
 
     # -- Extra KEDA triggers, appended to the built-in ones. Rendered through `tpl`, so

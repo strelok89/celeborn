@@ -149,7 +149,7 @@ worker:
     prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
     maxReplicaCount: 6
     activeSlots:
-      threshold: "500"   # tune, see below
+      threshold: "500"   # absolute slot count, tune it - see below
     behavior:
       scaleDown:
         stabilizationWindowSeconds: 1800
@@ -177,8 +177,15 @@ sum(metrics_ActiveSlotsCount_Value{...} and on (instance) metrics_IsDecommission
 ```
 
 It uses `metricType: AverageValue`, so the replica count is `ceil(total / threshold)`.
-`activeSlots.threshold` is the one value you must tune - there is no natural default, since
-what counts as a busy worker depends on the workload. Watch
+
+`activeSlots.threshold` is an absolute count, not a percentage, and it is the one value you
+must tune. A percentage would need a slot capacity to divide by, and no metric exports one:
+Celeborn computes a disk's `maxSlots` as `totalSpace / estimatedPartitionSize` on the master
+and keeps it in `DiskInfo`, where nothing publishes it. Note what that formula means, though -
+slot capacity is derived from disk space, so slot utilization and disk utilization track each
+other, and `diskUsage.threshold` is already the percentage target you would want. What
+`activeSlots` adds is timing: slots are allocated when a stage starts, before its data is
+written, so it leads where disk usage lags. Watch
 `sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number of
 workers you want at that peak.
 
