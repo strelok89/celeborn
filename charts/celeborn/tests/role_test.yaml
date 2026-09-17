@@ -48,3 +48,31 @@ tests:
           kind: Role
           name: default
           namespace: celeborn
+
+  - it: Should not grant statefulset scale access as default
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: ["pods"]
+              verbs: ["create", "list", "delete"]
+
+  - it: Should grant statefulset scale access when the autoscaling drain is enabled
+    set:
+      worker:
+        autoscaling:
+          enabled: true
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - equal:
+          path: rules[1]
+          value:
+            apiGroups: ["apps"]
+            resources: ["statefulsets/scale"]
+            verbs: ["get"]

@@ -244,8 +244,48 @@ worker:
     #   # -- Affinity for this zone. Replaces `worker.affinity` when set.
     #   affinity: {}
 
-  # -- Value for terminationGracePeriodSeconds for worker pods
+  # -- Value for terminationGracePeriodSeconds for worker pods. Raise it above
+  # `celeborn.worker.decommission.forceExitTimeout` when `worker.autoscaling.drain` is
+  # enabled, otherwise kubelet kills a draining worker before it finishes. See README.md.
   terminationGracePeriodSeconds: 30
+
+  # Autoscaling for Celeborn workers, via a KEDA ScaledObject per worker statefulset.
+  # Requires KEDA in the cluster. See README.md.
+  autoscaling:
+    # -- Whether to create a KEDA ScaledObject for each worker statefulset.
+    enabled: false
+    # -- Lower bound. Empty means the statefulset's own replica count, which is
+    # `worker.replicas` split across zones when zone-aware replication is enabled.
+    minReplicaCount:
+    # -- Upper bound, per statefulset (so per zone, when zones are enabled).
+    maxReplicaCount: 10
+    # -- How often KEDA evaluates the triggers, in seconds.
+    pollingInterval: 30
+    # -- Seconds before scaling to zero. Only applies with `minReplicaCount: 0`; pace
+    # ordinary scale-in with `behavior.scaleDown` instead.
+    cooldownPeriod: 300
+    # -- Scaling behaviour, passed through to the underlying HPA.
+    behavior: {}
+    # -- KEDA triggers. Rendered through `tpl`, so `{{ .zone.name }}` resolves to the zone
+    # of the statefulset being scaled and one definition covers every zone. It renders as
+    # `<no value>` when zone-aware replication is off.
+    triggers: []
+    # - type: prometheus
+    #   # `Value`, not KEDA's `AverageValue` default, for a saturation ratio. See README.md.
+    #   metricType: Value
+    #   metadata:
+    #     serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+    #     query: max(1 - metrics_DeviceCelebornFreeBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"} / metrics_DeviceCelebornTotalBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"})
+    #     threshold: "0.7"
+
+    # Scale-in drain. Kubernetes scale-in only sends SIGTERM, which never reaches Celeborn's
+    # decommission path, so a removed worker would take its shuffle data with it.
+    drain:
+      # -- Whether to ask the worker to decommission before a scale-in removes it. The pod
+      # tells a scale-in from a rollout by comparing its own ordinal with the statefulset's
+      # desired replica count, and falls back to a graceful shutdown when it cannot read it.
+      # Needs `rbac.create` and `celeborn.worker.graceful.shutdown.enabled`. See README.md.
+      enabled: true
 
   # -- Annotations for Celeborn worker pods.
   annotations:

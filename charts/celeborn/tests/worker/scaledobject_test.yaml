@@ -1,0 +1,163 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+suite: Test Celeborn worker scaled object
+
+templates:
+  - worker/scaledobject.yaml
+
+release:
+  name: celeborn
+
+tests:
+  - it: Should not create a scaled object as default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: Should create a scaled object if `worker.autoscaling.enabled` is true
+    set:
+      worker:
+        replicas: 4
+        autoscaling:
+          enabled: true
+          maxReplicaCount: 8
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: celeborn-worker
+      - equal:
+          path: spec.scaleTargetRef
+          value:
+            apiVersion: apps/v1
+            kind: StatefulSet
+            name: celeborn-worker
+      - equal:
+          path: spec.minReplicaCount
+          value: 4
+      - equal:
+          path: spec.maxReplicaCount
+          value: 8
+
+  - it: Should create one scaled object per zone, each targeting its own statefulset
+    set:
+      worker:
+        replicas: 9
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+            - name: us-east-1b
+            - name: us-east-1c
+        autoscaling:
+          enabled: true
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - hasDocuments:
+          count: 3
+      - equal:
+          path: metadata.name
+          value: celeborn-worker-us-east-1c
+        documentIndex: 2
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: celeborn-worker-us-east-1c
+        documentIndex: 2
+      - equal:
+          path: spec.minReplicaCount
+          value: 3
+        documentIndex: 2
+
+  - it: Should render the zone into the trigger query
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1b
+        autoscaling:
+          enabled: true
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value{pod=~"celeborn-worker-{{ .zone.name }}-.*"}
+                threshold: "1000"
+    asserts:
+      - equal:
+          path: spec.triggers[0].metadata.query
+          value: metrics_ActiveShuffleSize_Value{pod=~"celeborn-worker-us-east-1b-.*"}
+
+  - it: Should use `worker.autoscaling.minReplicaCount` when it is set
+    set:
+      worker:
+        replicas: 9
+        autoscaling:
+          enabled: true
+          minReplicaCount: 2
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - equal:
+          path: spec.minReplicaCount
+          value: 2
+
+  - it: Should pass scaling behavior through to the HPA
+    set:
+      worker:
+        autoscaling:
+          enabled: true
+          behavior:
+            scaleDown:
+              stabilizationWindowSeconds: 1800
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - equal:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds
+          value: 1800
+
+  - it: Should fail if autoscaling is enabled without triggers
+    set:
+      worker:
+        autoscaling:
+          enabled: true
+          triggers: []
+    asserts:
+      - failedTemplate:
+          errorMessage: worker.autoscaling.enabled is true but worker.autoscaling.triggers is empty

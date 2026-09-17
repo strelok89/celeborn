@@ -131,6 +131,110 @@ its identity, so:
 
 Treat it as a maintenance-window change rather than a rolling update.
 
+## Autoscaling workers with KEDA
+
+`worker.autoscaling` creates a [KEDA](https://keda.sh) `ScaledObject` for each worker
+statefulset. With zone-aware replication enabled that is one per zone, so each zone scales
+on its own load - which is what you want when applications are pinned to a zone, because
+their load is genuinely uneven across zones.
+
+Triggers are yours to define; the chart does not assume a metrics backend. They are rendered
+through `tpl` against the zone's context, so one definition covers every zone (with
+zone-aware replication off there is no zone, and `{{ .zone.name }}` renders `<no value>`):
+
+```yaml
+worker:
+  terminationGracePeriodSeconds: 21900   # see "Draining on scale-in" below
+  autoscaling:
+    enabled: true
+    maxReplicaCount: 6
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 1800
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 900
+    triggers:
+      - type: prometheus
+        metricType: Value
+        metadata:
+          serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+          query: >-
+            max(1 -
+              metrics_DeviceCelebornFreeBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"}
+              / metrics_DeviceCelebornTotalBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"})
+          threshold: "0.7"
+```
+
+Celeborn exports gauges as `metrics_<Name>_Value` and counters as `metrics_<Name>_Count`.
+The ones worth scaling on are `DeviceCelebornFreeBytes` / `DeviceCelebornTotalBytes` (disk
+headroom), `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held), `DirectMemoryUsageRatio`
+(the off-heap ceiling that pauses pushes), and `IsHighWorkload` / `PausePushDataStatus` (the
+worker is already in trouble). `IsDecommissioningWorker` is how you keep a draining worker from
+counting towards the load that triggered its own removal.
+
+There is no zone label on these metrics, so a per-zone query selects on the pod name - which
+works precisely because zone-aware replication puts the zone in the statefulset name, and hence
+in every pod name under it. `role="Worker"` matters too: masters report the device gauges for
+whichever volume holds the Ratis directory.
+
+Mind `metricType`. KEDA defaults to `AverageValue`, where the metric is treated as total work
+and the replica count becomes `ceil(metric / threshold)` - right for a sum like
+`sum(metrics_ActiveShuffleSize_Value{...})` against a per-worker byte target, wrong for a ratio,
+which would collapse the fleet to one or two pods. A saturation ratio needs `metricType: Value`,
+where the count becomes `ceil(replicas * metric / threshold)`.
+
+`minReplicaCount` defaults to the statefulset's own replica count, so a zone never scales
+below the size it was deployed at unless you set it explicitly.
+
+Three properties of this fleet are worth sizing for. Scaling out is slow: a new worker
+usually needs a new node, and it starts with no shuffle data on it, so autoscaling answers
+sustained load changes rather than bursts. Scaling in always removes the highest ordinal,
+which is not necessarily the least busy worker. And while a worker drains, its statefulset
+cannot grow - so a scale-in decided at low load leaves that zone one worker short until the
+drain finishes. Pace scale-in conservatively with `behavior.scaleDown`, and consider
+excluding draining workers from the trigger query.
+
+### Draining on scale-in
+
+Kubernetes scale-in only deletes a pod, which reaches Celeborn as a `SIGTERM`. That never
+enters the decommission path, so a removed worker takes its shuffle data with it and any
+application still reading from it loses that stage. Celeborn's safe drain is `DECOMMISSION`,
+which waits for the worker's shuffle keys to expire (up to
+`celeborn.worker.decommission.forceExitTimeout`, 6h by default) and is only reachable through
+the worker's HTTP API.
+
+`worker.autoscaling.drain.enabled` (on by default when autoscaling is enabled) adds a
+`preStop` hook that calls it. The hook must not decommission on a rolling update or a node
+drain, or every pod replacement would block for hours, so it distinguishes the two: the
+statefulset controller lowers `spec.replicas` *before* deleting pods on a scale-in, so a pod
+whose ordinal is at or above the desired count is being removed for good and decommissions,
+while any other pod shuts down gracefully and comes back. If the desired count cannot be read
+the hook falls back to a graceful shutdown, so a broken lookup cannot stall a rollout.
+
+This needs three things:
+
+- `rbac.create: true`. The chart adds `get` on `statefulsets/scale` to the role when the
+  drain is enabled; the hook reads the count with the pod's own service account.
+- `celeborn.worker.graceful.shutdown.enabled: true`, so the non-scale-in path actually
+  persists state and recovers on restart.
+- `worker.terminationGracePeriodSeconds` above `celeborn.worker.decommission.forceExitTimeout`.
+  This is an upper bound, not a wait: a graceful shutdown still finishes in
+  `celeborn.worker.graceful.shutdown.timeout`, so a long grace period does not slow rollouts
+  down.
+
+Set `worker.autoscaling.drain.enabled: false` to opt out, but then treat scale-in as
+destructive and only let it happen when the fleet is idle.
+
+### Helm and the autoscaler both own `replicas`
+
+The chart keeps rendering `spec.replicas`, so a fresh install starts at the size you asked
+for rather than at one. Once KEDA is scaling, a continuous-delivery tool that reconciles the
+rendered manifest will fight it over that field. Tell it to ignore the field - in Argo CD,
+`ignoreDifferences` on `/spec/replicas` for the worker statefulsets, with
+`RespectIgnoreDifferences=true`.
+
 ## Documentation
 
 For additional details on deploying the Celeborn Kubernetes Helm chart, please refer to the [Celeborn on Kubernetes](https://celeborn.apache.org/docs/latest/deploy_on_k8s/) documentation.
