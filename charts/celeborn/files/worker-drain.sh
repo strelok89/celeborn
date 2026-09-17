@@ -18,7 +18,7 @@
 # preStop hook for a Celeborn worker. Asks the worker to decommission when a scale-in is
 # removing it, and to shut down gracefully otherwise. See the chart's README.md.
 #
-# Reads POD_NAME, STS_NAME and WORKER_HTTP_PORT from the environment.
+# Reads POD_NAME, STS_NAME, WORKER_HTTP_PORT and ALWAYS_DECOMMISSION from the environment.
 
 set -u
 
@@ -34,36 +34,46 @@ log() {
   fi
 }
 
-# A scale-in must decommission, waiting for the shuffle data to expire. A rolling update or a
-# node drain must not, or every pod replacement would block for hours. The statefulset
-# controller lowers spec.replicas before deleting pods on a scale-in, so an ordinal at or above
-# the desired count is being removed for good.
-ORDINAL=${POD_NAME:-}
-ORDINAL=${ORDINAL##*-}
-
+ORDINAL=""
 DESIRED=""
-if [ -r "$SA/token" ]; then
-  URL="https://kubernetes.default.svc/apis/apps/v1/namespaces/$(cat "$SA/namespace")/statefulsets/${STS_NAME:-}/scale"
-  AUTH="Authorization: Bearer $(cat "$SA/token")"
-  if command -v curl >/dev/null 2>&1; then
-    SCALE=$(curl -sS --cacert "$SA/ca.crt" -H "$AUTH" "$URL" 2>/dev/null)
-  else
-    SCALE=$(wget -q -O - --ca-certificate="$SA/ca.crt" --header="$AUTH" "$URL" 2>/dev/null)
-  fi
-  DESIRED=$(printf '%s' "$SCALE" | sed 's/"status".*//' | grep -o '"replicas":[0-9 ]*' | head -n 1 | tr -dc '0-9')
-fi
-
-case "$ORDINAL" in ''|*[!0-9]*) ORDINAL="" ;; esac
-case "$DESIRED" in ''|*[!0-9]*) DESIRED="" ;; esac
-
-# Anything unreadable falls back to a graceful shutdown, so a failed lookup cannot stall a
-# rollout with a drain that was never wanted.
 EXIT_TYPE=GRACEFUL
-if [ -n "$ORDINAL" ] && [ -n "$DESIRED" ] && [ "$ORDINAL" -ge "$DESIRED" ]; then
+
+if [ "${ALWAYS_DECOMMISSION:-false}" = "true" ]; then
+  # Graceful shutdown persists state to recover from on restart. Where the worker's storage
+  # does not outlive the pod there is nothing to recover, so a rollout would drop in-flight
+  # shuffles - drain every time instead, whatever is removing this pod.
   EXIT_TYPE=DECOMMISSION
+  log "alwaysDecommission is set - draining regardless of why this pod is going away"
+else
+  # A scale-in must decommission, waiting for the shuffle data to expire. A rolling update or
+  # a node drain must not, or every pod replacement would block for hours. The statefulset
+  # controller lowers spec.replicas before deleting pods on a scale-in, so an ordinal at or
+  # above the desired count is being removed for good.
+  ORDINAL=${POD_NAME:-}
+  ORDINAL=${ORDINAL##*-}
+
+  if [ -r "$SA/token" ]; then
+    URL="https://kubernetes.default.svc/apis/apps/v1/namespaces/$(cat "$SA/namespace")/statefulsets/${STS_NAME:-}/scale"
+    AUTH="Authorization: Bearer $(cat "$SA/token")"
+    if command -v curl >/dev/null 2>&1; then
+      SCALE=$(curl -sS --cacert "$SA/ca.crt" -H "$AUTH" "$URL" 2>/dev/null)
+    else
+      SCALE=$(wget -q -O - --ca-certificate="$SA/ca.crt" --header="$AUTH" "$URL" 2>/dev/null)
+    fi
+    DESIRED=$(printf '%s' "$SCALE" | sed 's/"status".*//' | grep -o '"replicas":[0-9 ]*' | head -n 1 | tr -dc '0-9')
+  fi
+
+  case "$ORDINAL" in ''|*[!0-9]*) ORDINAL="" ;; esac
+  case "$DESIRED" in ''|*[!0-9]*) DESIRED="" ;; esac
+
+  # Anything unreadable falls back to a graceful shutdown, so a failed lookup cannot stall a
+  # rollout with a drain that was never wanted.
+  if [ -n "$ORDINAL" ] && [ -n "$DESIRED" ] && [ "$ORDINAL" -ge "$DESIRED" ]; then
+    EXIT_TYPE=DECOMMISSION
+  fi
 fi
 
-if [ -z "$DESIRED" ]; then
+if [ "${ALWAYS_DECOMMISSION:-false}" != "true" ] && [ -z "$DESIRED" ]; then
   log "could not read ${STS_NAME:-unknown} desired replicas - a scale-in will NOT decommission"
 fi
 log "ordinal=${ORDINAL:-unknown} desired=${DESIRED:-unknown} exit=$EXIT_TYPE"

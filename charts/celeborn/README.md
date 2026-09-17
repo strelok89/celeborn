@@ -255,6 +255,31 @@ This needs three things:
 Set `worker.autoscaling.drain.enabled: false` to opt out, but then treat scale-in as
 destructive and only let it happen when the fleet is idle.
 
+### When the worker's storage does not outlive the pod
+
+Telling a scale-in from a rollout is only worth doing if a rollout can recover. Graceful
+shutdown persists committed file metadata to `celeborn.worker.graceful.shutdown.recoverPath` and
+recovers from it when the worker comes back - which needs both that path and
+`celeborn.worker.storage.dirs` to survive the pod. On an `emptyDir`, or on instance-store disks
+that are wiped when the node is replaced, neither does: the worker returns to empty disks, there
+is nothing to recover, and the in-flight shuffles it was holding are lost.
+
+`worker.autoscaling.drain.alwaysDecommission: true` drops the distinction and decommissions on
+every termination, so a worker is never removed while an application still needs what is on it.
+It also needs no Kubernetes API access, since it never reads the replica count, and the chart
+leaves the `statefulsets/scale` rule out of the role.
+
+What it costs:
+
+- Rollouts and node drains wait for the drain as well, bounded by
+  `celeborn.worker.decommission.forceExitTimeout` rather than
+  `celeborn.worker.graceful.shutdown.timeout`. With `OrderedReady` a rollout drains each worker
+  in turn, so budget accordingly.
+- Anything that evicts a pod on a deadline shorter than the drain will still kill it mid-drain -
+  a cluster autoscaler reclaiming a node, or a spot interruption with its two-minute notice.
+  Make sure the node pool's own grace period is at least as long as you expect a drain to take,
+  or accept that those paths behave as they did before.
+
 ### Helm and the autoscaler both own `replicas`
 
 The chart keeps rendering `spec.replicas`, so a fresh install starts at the size you asked

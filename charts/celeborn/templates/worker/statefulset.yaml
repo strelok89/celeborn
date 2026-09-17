@@ -154,6 +154,8 @@ spec:
           value: {{ include "celeborn.worker.statefulSet.name" . }}
         - name: WORKER_HTTP_PORT
           value: {{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 | quote }}
+        - name: ALWAYS_DECOMMISSION
+          value: {{ .Values.worker.autoscaling.drain.alwaysDecommission | quote }}
         {{- end }}
         {{- with .Values.worker.env }}
         {{- toYaml . | nindent 8 }}

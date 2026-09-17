@@ -315,6 +315,12 @@ worker:
       # desired replica count, and falls back to a graceful shutdown when it cannot read it.
       # Needs `rbac.create` and `celeborn.worker.graceful.shutdown.enabled`. See README.md.
       enabled: true
+      # -- Decommission on every termination, not only a scale-in. Set this when the worker's
+      # storage does not outlive its pod: graceful shutdown persists state to recover from on
+      # restart, and with nothing to recover a rollout drops its in-flight shuffles. The cost
+      # is that rollouts and node drains then wait for the drain too, bounded by
+      # `celeborn.worker.decommission.forceExitTimeout`. See README.md.
+      alwaysDecommission: false
 
   # -- Annotations for Celeborn worker pods.
   annotations:

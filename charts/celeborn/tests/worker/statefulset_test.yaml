@@ -713,6 +713,30 @@ tests:
           value:
             name: WORKER_HTTP_PORT
             value: "9096"
+      - equal:
+          path: spec.template.spec.containers[0].env[3]
+          value:
+            name: ALWAYS_DECOMMISSION
+            value: "false"
+
+  - it: Should tell the drain script to always decommission when asked
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        autoscaling:
+          enabled: true
+          drain:
+            alwaysDecommission: true
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[3].value
+          value: "true"
 
   - it: Should point the drain script at the zone statefulset
     template: worker/statefulset.yaml
