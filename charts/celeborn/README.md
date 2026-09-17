@@ -192,6 +192,67 @@ What it costs:
   Make sure the node pool's own grace period is at least as long as you expect a drain to take,
   or accept that those paths behave as they did before.
 
+#### Worked example: local NVMe through an `emptyDir`
+
+A common shape for workers is to skip network storage entirely and write to the node's own NVMe
+- an `emptyDir` mounted at `celeborn.worker.storage.dirs`, landing on the instance's local disks.
+On AWS that means instance-store NVMe, and on a node OS that assembles those disks into one
+array for container storage (Bottlerocket's local-storage setup, for instance) an `emptyDir`
+lands on that array with no extra wiring. It is a reasonable choice: shuffle is a
+write-heavy, short-lived, reproducible workload, so there is little reason to pay for network
+volumes, per-volume throughput ceilings, or PVCs that pin an ordinal to one zone.
+
+The catch is lifetime, and it is shorter than people expect. An `emptyDir` is deleted when the
+pod leaves the node - not only when the node goes away. So both
+`celeborn.worker.storage.dirs` and `celeborn.worker.graceful.shutdown.recoverPath`, if it sits
+under the same mount, disappear on every pod replacement. Graceful shutdown still writes its
+recovery database, and the replacement worker still starts up and re-registers, but it comes
+back to empty disks and there is nothing to read the database against.
+
+What that costs while jobs are running: a rolling update, a chart upgrade or a scale-in removes
+a worker that is holding shuffle data for applications still running. Those fetches fail, and
+since `celeborn.client.push.replicate.enabled` is `false` by default there is no second copy -
+the engine recomputes the stages that produced the lost partitions. A rollout across a fleet of
+workers can do this repeatedly, to whatever is running at the time.
+
+So on ephemeral storage the drain is what keeps a running job's shuffle alive, and
+`alwaysDecommission` is the setting that matters - the scale-in/rollout distinction is pointless
+when neither can recover:
+
+```yaml
+worker:
+  # Above celeborn.worker.decommission.forceExitTimeout (6h), so kubelet does not kill a
+  # worker part-way through draining.
+  terminationGracePeriodSeconds: 21900
+  drain:
+    enabled: true
+    alwaysDecommission: true
+  volumes:
+    - name: celeborn-data
+      emptyDir: {}
+  volumeMounts:
+    - name: celeborn-data
+      mountPath: /celeborn-data/disk0
+celeborn:
+  celeborn.worker.storage.dirs: /celeborn-data/disk0:disktype=SSD
+  celeborn.worker.graceful.shutdown.enabled: true
+```
+
+A worker then stays up until the applications holding data on it are finished, and only then
+exits - so no running job loses its shuffle to a deployment.
+
+Note that an `emptyDir` needs no `chown` init container, unlike the `hostPath` volumes the chart
+mounts by default: Kubernetes applies `worker.podSecurityContext.fsGroup` to it, so the worker
+can write to the mount as it is.
+
+Two things this still does not cover. Losing the node itself - a spot interruption, or a node
+autoscaler consolidating - destroys the disks whatever the pod does, and gives less time than a
+drain needs; set the node pool's grace period to at least the drain you expect, and treat the
+remainder as accepted risk. And if you want a rollout to genuinely recover rather than wait,
+storage has to outlive the pod: a `hostPath` on the NVMe mount for both `storage.dirs` and
+`recoverPath` survives a pod restart on the same node, though nothing survives the node being
+replaced, and a `hostPath` gives the scheduler no reason to put the pod back where its data is.
+
 ## Autoscaling workers with KEDA
 
 `worker.autoscaling` creates a [KEDA](https://keda.sh) `ScaledObject` for each worker
