@@ -41,7 +41,8 @@ spec:
     apiVersion: apps/v1
     kind: StatefulSet
     name: {{ include "celeborn.worker.statefulSet.name" . }}
-  minReplicaCount: {{ .Values.worker.autoscaling.minReplicaCount | default (include "celeborn.worker.replicas" .) }}
+  {{- /* Not `default`: it treats an explicit 0 as unset, which rules out scaling to zero. */}}
+  minReplicaCount: {{ if kindIs "invalid" .Values.worker.autoscaling.minReplicaCount }}{{ include "celeborn.worker.replicas" . }}{{ else }}{{ .Values.worker.autoscaling.minReplicaCount }}{{ end }}
   maxReplicaCount: {{ .Values.worker.autoscaling.maxReplicaCount }}
   pollingInterval: {{ .Values.worker.autoscaling.pollingInterval }}
   cooldownPeriod: {{ .Values.worker.autoscaling.cooldownPeriod }}
@@ -57,6 +58,13 @@ spec:
     {{- end }}
     {{- $ctx := . }}
     {{- with .Values.worker.autoscaling.triggers }}
+    {{- /*
+    Checked before rendering: without a zone `.zone.name` yields an empty string, so a
+    `zone=""` matcher would quietly match every worker rather than failing.
+    */}}
+    {{- if and (not $ctx.Values.worker.zoneAwareReplication.enabled) (contains ".zone" (toYaml .)) }}
+    {{- fail "a worker.autoscaling.triggers entry references .zone, which only has a value when worker.zoneAwareReplication is enabled" }}
+    {{- end }}
     {{- tpl (toYaml .) $ctx | nindent 4 }}
     {{- end }}
 {{- end }}

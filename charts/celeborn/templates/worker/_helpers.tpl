@@ -114,12 +114,13 @@ statefulset's workers: by the `zone` label the worker publishes when it has one,
 name when the zone metric label is turned off.
 */}}
 {{- define "celeborn.worker.autoscaling.selector" -}}
-{{- $selector := "role=\"Worker\"" -}}
+{{- $selector := printf "role=\"Worker\",namespace=\"%s\"" .Release.Namespace -}}
 {{- if .zone -}}
 {{- if .Values.worker.zoneAwareReplication.metricsLabel -}}
 {{- $selector = printf "%s,zone=\"%s\"" $selector .zone.name -}}
 {{- else -}}
-{{- $selector = printf "%s,pod=~\"%s-.*\"" $selector (include "celeborn.worker.statefulSet.name" .) -}}
+{{- /* Anchored on the ordinal, so zone `a` does not also match the pods of zone `a-x`. */ -}}
+{{- $selector = printf "%s,pod=~\"%s-[0-9]+\"" $selector (include "celeborn.worker.statefulSet.name" .) -}}
 {{- end -}}
 {{- end -}}
 {{ $selector }}

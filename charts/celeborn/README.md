@@ -57,11 +57,11 @@ Specify parameters using `--set key=value[,key=value]` argument to `helm install
 ## Zone-aware worker replication
 
 By default the chart deploys all workers in a single statefulset, and which zone a worker
-lands in is whatever the scheduler decides. Pod-level spreading (`worker.affinity`,
-`worker.topologySpreadConstraints`) can balance that, but the balance is re-derived on every
-scheduling decision: it holds while the constraint is satisfiable and silently degrades when
-it is not, for example when one zone is out of capacity for the instance type the workers
-need, or when several nodes are replaced at once.
+lands in is whatever the scheduler decides. Pod-level spreading - `worker.affinity`, or a
+topology spread constraint where the chart supports one - can balance that, but the balance is
+re-derived on every scheduling decision: it holds while the constraint is satisfiable and
+silently degrades when it is not, for example when one zone is out of capacity for the instance
+type the workers need, or when several nodes are replaced at once.
 
 Setting `worker.zoneAwareReplication.enabled` deploys one worker statefulset per zone
 instead, which makes zone membership structural rather than emergent:
@@ -245,6 +245,10 @@ Note that an `emptyDir` needs no `chown` init container, unlike the `hostPath` v
 mounts by default: Kubernetes applies `worker.podSecurityContext.fsGroup` to it, so the worker
 can write to the mount as it is.
 
+One thing to expect when first enabling the drain: the script is shipped in the config map that
+master and worker share, so adding it changes the `celeborn.apache.org/conf-hash` annotation on
+both and the masters roll as well.
+
 Two things this still does not cover. Losing the node itself - a spot interruption, or a node
 autoscaler consolidating - destroys the disks whatever the pod does, and gives less time than a
 drain needs; set the node pool's grace period to at least the drain you expect, and treat the
@@ -319,9 +323,12 @@ Both exclude decommissioning workers. A worker that is draining still holds its 
 slots for as long as it takes, and counting it would have the fleet scale out to replace
 capacity it has not released yet.
 
-Disable either with `diskUsage.enabled: false` / `activeSlots.enabled: false`, and add your own
+Disable either with `diskUsage.enabled: false` / `memoryUsage.enabled: false`, and add your own
 with `worker.autoscaling.triggers`, which are appended to the built-in ones and rendered
 through `tpl` against the zone's context, so `{{ .zone.name }}` resolves per zone.
+
+The built-in queries select on `role="Worker"` and the release namespace, so several Celeborn
+clusters can share one Prometheus without scaling on each other's workers.
 
 Celeborn exports gauges as `metrics_<Name>_Value` and counters as `metrics_<Name>_Count`. Other
 metrics worth scaling on are `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held),
@@ -352,10 +359,17 @@ excluding draining workers from the trigger query.
 ### Helm and the autoscaler both own `replicas`
 
 The chart keeps rendering `spec.replicas`, so a fresh install starts at the size you asked
-for rather than at one. Once KEDA is scaling, a continuous-delivery tool that reconciles the
-rendered manifest will fight it over that field. Tell it to ignore the field - in Argo CD,
-`ignoreDifferences` on `/spec/replicas` for the worker statefulsets, with
-`RespectIgnoreDifferences=true`.
+for rather than at one. The cost is that anything reconciling the rendered manifest will fight
+KEDA over that field.
+
+A plain `helm upgrade` is included in that: its three-way merge patches a KEDA-scaled replica
+count back to the chart's value, and with `OrderedReady` the controller then removes the excess
+ordinals one at a time, waiting for each to terminate - which is slow once `worker.drain` is
+enabled, and slower again with `alwaysDecommission`. Keep `worker.replicas` in step with where
+KEDA has settled, or pass `--set worker.replicas=<current>` when upgrading.
+
+For a continuous-delivery tool, tell it to ignore the field - in Argo CD, `ignoreDifferences`
+on `/spec/replicas` for the worker statefulsets, with `RespectIgnoreDifferences=true`.
 
 ## Documentation
 

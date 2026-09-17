@@ -18,7 +18,8 @@
 # preStop hook for a Celeborn worker. Asks the worker to decommission when a scale-in is
 # removing it, and to shut down gracefully otherwise. See the chart's README.md.
 #
-# Reads POD_NAME, STS_NAME, WORKER_HTTP_PORT and ALWAYS_DECOMMISSION from the environment.
+# Reads POD_NAME, POD_IP, STS_NAME, WORKER_HTTP_PORT and ALWAYS_DECOMMISSION from the
+# environment.
 
 set -u
 
@@ -79,14 +80,35 @@ fi
 log "ordinal=${ORDINAL:-unknown} desired=${DESIRED:-unknown} exit=$EXIT_TYPE"
 
 BODY='{"type":"'"$EXIT_TYPE"'"}'
-EXIT_URL="http://127.0.0.1:${WORKER_HTTP_PORT:-9096}/api/v1/workers/exit"
-if command -v curl >/dev/null 2>&1; then
-  curl -sS -f -X POST -H 'Content-Type: application/json' -d "$BODY" "$EXIT_URL" >/dev/null
-  RC=$?
-else
-  wget -q -O /dev/null --header='Content-Type: application/json' --post-data="$BODY" "$EXIT_URL"
-  RC=$?
+
+# The worker's HTTP server binds to one address, not the wildcard: celeborn.worker.http.host
+# defaults to <localhost>, which resolves to this pod's own address, and Jetty is given that
+# host. So loopback is refused - target the pod IP, and keep loopback only as a fallback for a
+# deployment that has pointed the server somewhere else, such as 0.0.0.0.
+HOSTS=""
+if [ -n "${POD_IP:-}" ]; then
+  case "$POD_IP" in
+    *:*) HOSTS="[$POD_IP]" ;;
+    *) HOSTS="$POD_IP" ;;
+  esac
 fi
+HOSTS="$HOSTS 127.0.0.1"
+
+RC=1
+for HOST in $HOSTS; do
+  EXIT_URL="http://$HOST:${WORKER_HTTP_PORT:-9096}/api/v1/workers/exit"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sS -f -X POST -H 'Content-Type: application/json' -d "$BODY" "$EXIT_URL" >/dev/null 2>&1
+    RC=$?
+  else
+    wget -q -O /dev/null --header='Content-Type: application/json' --post-data="$BODY" "$EXIT_URL"
+    RC=$?
+  fi
+  if [ "$RC" -eq 0 ]; then
+    break
+  fi
+  log "exit request to $HOST failed"
+done
 
 if [ "$RC" -eq 0 ]; then
   # Hold the pod open while the worker drains. It exits on its own once done, and

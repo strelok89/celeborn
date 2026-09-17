@@ -316,7 +316,7 @@ worker:
 
     # -- Extra KEDA triggers, appended to the built-in ones. Rendered through `tpl`, so
     # `{{ .zone.name }}` resolves to the zone of the statefulset being scaled and one
-    # definition covers every zone. It renders as `<no value>` when zones are off.
+    # definition covers every zone. Referencing it with zones off is rejected at render time.
     triggers: []
     # - type: prometheus
     #   # `Value`, not KEDA's `AverageValue` default, for a saturation ratio. See README.md.

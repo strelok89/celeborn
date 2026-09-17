@@ -694,15 +694,22 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[1]
           value:
+            name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+      - equal:
+          path: spec.template.spec.containers[0].env[2]
+          value:
             name: STS_NAME
             value: celeborn-worker
       - equal:
-          path: spec.template.spec.containers[0].env[2]
+          path: spec.template.spec.containers[0].env[3]
           value:
             name: WORKER_HTTP_PORT
             value: "9096"
       - equal:
-          path: spec.template.spec.containers[0].env[3]
+          path: spec.template.spec.containers[0].env[4]
           value:
             name: ALWAYS_DECOMMISSION
             value: "false"
@@ -716,7 +723,7 @@ tests:
           alwaysDecommission: true
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[3].value
+          path: spec.template.spec.containers[0].env[4].value
           value: "true"
 
   - it: Should point the drain script at the zone statefulset
@@ -731,7 +738,7 @@ tests:
           enabled: true
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[1].value
+          path: spec.template.spec.containers[0].env[2].value
           value: celeborn-worker-us-east-1a
 
   - it: Should not add the preStop drain hook if `worker.drain` is disabled
@@ -801,3 +808,29 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].command[4]
           pattern: extraLabels
+
+  - it: Should fail if a zone has no name
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - nodeSelector:
+                topology.kubernetes.io/zone: us-east-1a
+    asserts:
+      - failedTemplate:
+          errorMessage: every entry in worker.zoneAwareReplication.zones needs a name
+
+  - it: Should fail if two zones share a name
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+            - name: us-east-1a
+    asserts:
+      - failedTemplate:
+          errorMessage: worker.zoneAwareReplication.zones has duplicate names

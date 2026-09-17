@@ -25,6 +25,16 @@ The no-zone case iterates once over an empty dict, which `if .zone` treats as un
 {{- fail "worker.zoneAwareReplication.enabled is true but worker.zoneAwareReplication.zones is empty" }}
 {{- end }}
 {{- $zones = .Values.worker.zoneAwareReplication.zones }}
+{{- $names := list }}
+{{- range $zone := $zones }}
+{{- if not $zone.name }}
+{{- fail "every entry in worker.zoneAwareReplication.zones needs a name" }}
+{{- end }}
+{{- $names = append $names $zone.name }}
+{{- end }}
+{{- if ne (len (uniq $names)) (len $names) }}
+{{- fail "worker.zoneAwareReplication.zones has duplicate names" }}
+{{- end }}
 {{- end }}
 {{- range $index, $zone := $zones }}
 {{- if $index }}
@@ -150,6 +160,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        {{- /* The worker's http server binds to this address, not the wildcard. */}}
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         - name: STS_NAME
           value: {{ include "celeborn.worker.statefulSet.name" . }}
         - name: WORKER_HTTP_PORT
