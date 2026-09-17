@@ -21,14 +21,22 @@ Common labels for Celeborn worker resources
 {{- define "celeborn.worker.labels" -}}
 {{ include "celeborn.labels" . }}
 app.kubernetes.io/role: worker
+{{- if .zone }}
+celeborn.apache.org/zone: {{ .zone.name }}
+{{- end }}
 {{- end }}
 
 {{/*
-Selector labels for Celeborn worker pods
+Selector labels for Celeborn worker pods. The zone label is only added when rendering
+within a zone context, so that cluster-wide selectors (service, pod monitor) keep
+matching the workers of every zone.
 */}}
 {{- define "celeborn.worker.selectorLabels" -}}
 {{ include "celeborn.selectorLabels" . }}
 app.kubernetes.io/role: worker
+{{- if .zone }}
+celeborn.apache.org/zone: {{ .zone.name }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -76,7 +84,28 @@ Create the name of the worker priority class to use
 Create the name of the worker statefulset to use
 */}}
 {{- define "celeborn.worker.statefulSet.name" -}}
+{{- if .zone -}}
+{{ include "celeborn.fullname" . }}-worker-{{ .zone.name }}
+{{- else -}}
 {{ include "celeborn.fullname" . }}-worker
+{{- end }}
+{{- end }}
+
+{{/*
+Number of replicas for a worker statefulset. Without zone-aware replication this is
+`worker.replicas` as-is; with it, `worker.replicas` is the total across all zones and each
+zone gets `ceil(replicas / zones)` unless the zone overrides it.
+*/}}
+{{- define "celeborn.worker.replicas" -}}
+{{- if .zone -}}
+{{- if .zone.replicas -}}
+{{ .zone.replicas }}
+{{- else -}}
+{{ divf .Values.worker.replicas (len .Values.worker.zoneAwareReplication.zones) | ceil | int }}
+{{- end }}
+{{- else -}}
+{{ .Values.worker.replicas }}
+{{- end }}
 {{- end }}
 
 {{/*

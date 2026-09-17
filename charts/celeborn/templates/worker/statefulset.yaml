@@ -15,6 +15,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */ -}}
 
+{{- /*
+One statefulset per zone when zone-aware replication is enabled, a single one otherwise.
+The no-zone case iterates once over an empty dict, which `if .zone` treats as unset.
+*/ -}}
+{{- $zones := list dict }}
+{{- if .Values.worker.zoneAwareReplication.enabled }}
+{{- if not .Values.worker.zoneAwareReplication.zones }}
+{{- fail "worker.zoneAwareReplication.enabled is true but worker.zoneAwareReplication.zones is empty" }}
+{{- end }}
+{{- $zones = .Values.worker.zoneAwareReplication.zones }}
+{{- end }}
+{{- range $index, $zone := $zones }}
+{{- if $index }}
+---
+{{- end }}
+{{- /* Render the body against a context carrying the zone, so `.` keeps working below. */}}
+{{- with dict "Values" $.Values "Release" $.Release "Chart" $.Chart "Capabilities" $.Capabilities "Template" $.Template "Files" $.Files "zone" $zone }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -23,7 +40,7 @@ metadata:
   labels:
     {{- include "celeborn.worker.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.worker.replicas }}
+  replicas: {{ include "celeborn.worker.replicas" . }}
   selector:
     matchLabels:
       {{- include "celeborn.worker.selectorLabels" . | nindent 6 }}
@@ -156,11 +173,16 @@ spec:
       {{- with .Values.worker.volumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
-      {{- with .Values.worker.nodeSelector }}
+      {{- $nodeSelector := merge (deepCopy (default dict (and .zone .zone.nodeSelector))) (default dict .Values.worker.nodeSelector) }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.worker.affinity }}
+      {{- $affinity := .Values.worker.affinity }}
+      {{- if and .zone .zone.affinity }}
+      {{- $affinity = .zone.affinity }}
+      {{- end }}
+      {{- with $affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -183,3 +205,5 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+{{- end }}
+{{- end }}

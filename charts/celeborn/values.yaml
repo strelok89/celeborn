@@ -220,7 +220,29 @@ master:
 
 worker:
   # -- Number of Celeborn worker replicas to deploy, should less than node number.
+  # With `worker.zoneAwareReplication.enabled`, this is the total across all zones and each
+  # zone deploys `ceil(replicas / number of zones)`.
   replicas: 5
+
+  # Zone-aware replication: render one worker statefulset per zone instead of a single one
+  # for the whole cluster, so zone membership is a property of the statefulset rather than
+  # the outcome of scheduling. See README.md.
+  zoneAwareReplication:
+    # -- Whether to deploy one Celeborn worker statefulset per zone.
+    enabled: false
+    # -- Zone definitions. Redefine the whole list to change any part of it, as YAML cannot
+    # merge list entries.
+    zones: []
+    # -- Name of the zone. Used in the statefulset name and in the
+    # `celeborn.apache.org/zone` label, so it must be a valid label value.
+    # - name: us-east-1a
+    #   # -- Node selector for this zone, merged over `worker.nodeSelector` (this one wins).
+    #   nodeSelector:
+    #     topology.kubernetes.io/zone: us-east-1a
+    #   # -- Replicas for this zone. Overrides the even split of `worker.replicas`.
+    #   replicas: 3
+    #   # -- Affinity for this zone. Replaces `worker.affinity` when set.
+    #   affinity: {}
 
   # -- Value for terminationGracePeriodSeconds for worker pods
   terminationGracePeriodSeconds: 30
