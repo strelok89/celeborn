@@ -169,6 +169,16 @@ max((1 - metrics_DeviceCelebornFreeBytes_Value{...} / metrics_DeviceCelebornTota
 
 It uses `metricType: Value`, because a ratio must not be divided across replicas.
 
+This trigger is also the slot utilization target, which is why there is no separate one for
+slots. Celeborn sizes a disk's slot capacity from its space -
+`maxSlots = totalSpace / estimatedPartitionSize` in `WorkerInfo` - so slots and bytes fill in
+step, and `activeSlots / maxSlots` reduces to the disk fraction above. A slot percentage could
+not be computed anyway: `maxSlots` lives in the master's `DiskInfo` and no metric exports it.
+If you want the raw count as a leading signal - slots are allocated when a stage starts, before
+its data is written - add it yourself through `worker.autoscaling.triggers` using
+`sum(metrics_ActiveSlotsCount_Value{role="Worker"})` with `metricType: AverageValue` and a
+per-worker target.
+
 **Off-heap memory** is the other way a worker takes itself out of service: it stops accepting
 pushes at `celeborn.worker.directMemoryRatioToPauseReceive` (0.85) and replication at 0.95.
 `DirectMemoryUsageRatio` is `memoryUsage / maxDirectMemory`, so it is already a fraction of
@@ -181,29 +191,6 @@ max(metrics_DirectMemoryUsageRatio_Value{...} and on (instance) metrics_IsDecomm
 Also `metricType: Value`. Keep the threshold below 0.85 so capacity arrives before pushes
 pause; the 0.70 default leaves the gap between scaling out and throttling.
 
-**Active slots** is off by default. Slot capacity is derived from disk space
-(`maxSlots = totalSpace / estimatedPartitionSize`), so it largely restates `diskUsage`; what it
-adds is timing, since slots are allocated when a stage starts and the data is written after.
-Enable it with `activeSlots.enabled: true`. It scales on slots held, as a total against a
-per-worker target:
-
-```promql
-sum(metrics_ActiveSlotsCount_Value{...} and on (instance) metrics_IsDecommissioningWorker_Value{...} == 0)
-```
-
-It uses `metricType: AverageValue`, so the replica count is `ceil(total / threshold)`.
-
-`activeSlots.threshold` is an absolute count, not a percentage, and it is the one value you
-must tune. A percentage would need a slot capacity to divide by, and no metric exports one:
-Celeborn computes a disk's `maxSlots` as `totalSpace / estimatedPartitionSize` on the master
-and keeps it in `DiskInfo`, where nothing publishes it. Note what that formula means, though -
-slot capacity is derived from disk space, so slot utilization and disk utilization track each
-other, and `diskUsage.threshold` is already the percentage target you would want. What
-`activeSlots` adds is timing: slots are allocated when a stage starts, before its data is
-written, so it leads where disk usage lags. Watch
-`sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number of
-workers you want at that peak.
-
 Both exclude decommissioning workers. A worker that is draining still holds its disk and its
 slots for as long as it takes, and counting it would have the fleet scale out to replace
 capacity it has not released yet.
@@ -214,8 +201,8 @@ through `tpl` against the zone's context, so `{{ .zone.name }}` resolves per zon
 
 Celeborn exports gauges as `metrics_<Name>_Value` and counters as `metrics_<Name>_Count`. Other
 metrics worth scaling on are `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held),
-`DirectMemoryUsageRatio` (the off-heap ceiling that pauses pushes), and `IsHighWorkload` /
-`PausePushDataStatus` (the worker is already in trouble).
+`ActiveSlotsCount` (slots allocated), and `IsHighWorkload` / `PausePushDataStatus` (the worker
+is already in trouble).
 
 The `zone` label the built-in queries select on comes from
 `worker.zoneAwareReplication.metricsLabel`, which passes the zone into

@@ -275,13 +275,13 @@ worker:
     prometheusAddress: ""
 
     # Scale out when the fullest worker runs out of disk. This is the signal that bites
-    # first: a worker that fills up stops accepting pushes. See README.md.
+    # first: a worker that fills up stops accepting pushes.
+    # This doubles as the slot utilization target: a disk's `maxSlots` is its total space
+    # divided by the estimated partition size, so slots and disk fill in step. See README.md.
     diskUsage:
       # -- Whether to add the disk usage trigger.
       enabled: true
-      # -- Fraction of the worker's Celeborn disk capacity in use, between 0 and 1. This is
-      # also the closest thing to a slot utilization target: Celeborn derives a disk's
-      # `maxSlots` from its total space, so the two track each other. See README.md.
+      # -- Fraction of the worker's Celeborn disk capacity in use, between 0 and 1.
       threshold: "0.70"
 
     # Scale out when workers run short of off-heap memory. A worker stops accepting pushes at
@@ -294,18 +294,6 @@ worker:
       # `celeborn.worker.directMemoryRatioToPauseReceive` (0.85) so capacity arrives before
       # pushes pause.
       threshold: "0.70"
-
-    # Scale out when workers are holding too many slots each. Off by default: slot capacity is
-    # derived from disk space, so this largely restates `diskUsage`. What it adds is timing -
-    # slots are allocated before the data is written. See README.md.
-    activeSlots:
-      # -- Whether to add the active slots trigger.
-      enabled: false
-      # -- Target active slots per worker, as an absolute count. It cannot be a percentage:
-      # no metric exports a worker's slot capacity. Deployment-specific, so tune it: watch
-      # `sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number
-      # of workers you want at that peak. See README.md.
-      threshold: "500"
 
     # -- Extra KEDA triggers, appended to the built-in ones. Rendered through `tpl`, so
     # `{{ .zone.name }}` resolves to the zone of the statefulset being scaled and one

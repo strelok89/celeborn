@@ -151,15 +151,6 @@ would have the fleet scale out to replace capacity it is still holding.
     query: max(metrics_DirectMemoryUsageRatio_Value{{ printf "{%s}" $selector }} {{ $live }})
     threshold: {{ .Values.worker.autoscaling.memoryUsage.threshold | quote }}
 {{- end }}
-{{- if .Values.worker.autoscaling.activeSlots.enabled }}
-- type: prometheus
-  {{- /* AverageValue: the sum is total work and the threshold is the per-worker target. */}}
-  metricType: AverageValue
-  metadata:
-    serverAddress: {{ required "worker.autoscaling.prometheusAddress is required by the built-in triggers" .Values.worker.autoscaling.prometheusAddress }}
-    query: sum(metrics_ActiveSlotsCount_Value{{ printf "{%s}" $selector }} {{ $live }})
-    threshold: {{ .Values.worker.autoscaling.activeSlots.threshold | quote }}
-{{- end }}
 {{- end }}
 
 {{/*

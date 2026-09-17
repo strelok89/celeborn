@@ -157,7 +157,7 @@ tests:
           path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds
           value: 1800
 
-  - it: Should add the disk and memory usage triggers by default, and not slots
+  - it: Should add the disk and memory usage triggers by default
     set:
       worker:
         autoscaling:
@@ -185,28 +185,6 @@ tests:
       - equal:
           path: spec.triggers[1].metadata.threshold
           value: "0.70"
-      - notMatchRegex:
-          path: spec.triggers[1].metadata.query
-          pattern: ActiveSlotsCount
-
-  - it: Should add the active slots trigger when it is enabled
-    set:
-      worker:
-        autoscaling:
-          enabled: true
-          prometheusAddress: http://prometheus:9090
-          activeSlots:
-            enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.triggers
-          count: 3
-      - equal:
-          path: spec.triggers[2].metricType
-          value: AverageValue
-      - matchRegex:
-          path: spec.triggers[2].metadata.query
-          pattern: sum\(metrics_ActiveSlotsCount_Value\{role="Worker"\}
 
   - it: Should exclude decommissioning workers from both default triggers
     set:
@@ -314,9 +292,7 @@ tests:
             enabled: false
           memoryUsage:
             enabled: false
-          activeSlots:
-            enabled: false
           triggers: []
     asserts:
       - failedTemplate:
-          errorMessage: "worker.autoscaling.enabled is true but no trigger is: enable worker.autoscaling.diskUsage, memoryUsage or activeSlots, or set worker.autoscaling.triggers"
+          errorMessage: "worker.autoscaling.enabled is true but no trigger is: enable worker.autoscaling.diskUsage or memoryUsage, or set worker.autoscaling.triggers"
