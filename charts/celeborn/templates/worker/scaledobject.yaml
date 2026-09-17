@@ -16,8 +16,8 @@ limitations under the License.
 */ -}}
 
 {{- if .Values.worker.autoscaling.enabled }}
-{{- if not .Values.worker.autoscaling.triggers }}
-{{- fail "worker.autoscaling.enabled is true but worker.autoscaling.triggers is empty" }}
+{{- if not (or .Values.worker.autoscaling.diskUsage.enabled .Values.worker.autoscaling.activeSlots.enabled .Values.worker.autoscaling.triggers) }}
+{{- fail "worker.autoscaling.enabled is true but no trigger is: enable worker.autoscaling.diskUsage or activeSlots, or set worker.autoscaling.triggers" }}
 {{- end }}
 {{- /* One ScaledObject per worker statefulset, so each zone scales on its own load. */}}
 {{- $zones := list dict }}
@@ -52,7 +52,13 @@ spec:
         {{- toYaml . | nindent 8 }}
   {{- end }}
   triggers:
-    {{- tpl (toYaml .Values.worker.autoscaling.triggers) . | nindent 4 }}
+    {{- with include "celeborn.worker.autoscaling.defaultTriggers" . | trim }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- $ctx := . }}
+    {{- with .Values.worker.autoscaling.triggers }}
+    {{- tpl (toYaml .) $ctx | nindent 4 }}
+    {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

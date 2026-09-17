@@ -109,6 +109,51 @@ zone gets `ceil(replicas / zones)` unless the zone overrides it.
 {{- end }}
 
 {{/*
+Label selector used by the built-in autoscaling triggers. Scopes the query to this
+statefulset's workers: by the `zone` label the worker publishes when it has one, and by pod
+name when the zone metric label is turned off.
+*/}}
+{{- define "celeborn.worker.autoscaling.selector" -}}
+{{- $selector := "role=\"Worker\"" -}}
+{{- if .zone -}}
+{{- if .Values.worker.zoneAwareReplication.metricsLabel -}}
+{{- $selector = printf "%s,zone=\"%s\"" $selector .zone.name -}}
+{{- else -}}
+{{- $selector = printf "%s,pod=~\"%s-.*\"" $selector (include "celeborn.worker.statefulSet.name" .) -}}
+{{- end -}}
+{{- end -}}
+{{ $selector }}
+{{- end }}
+
+{{/*
+Built-in autoscaling triggers, in front of any the user adds. Both exclude a decommissioning
+worker, whose disk stays full and whose slots stay allocated while it drains - counting it
+would have the fleet scale out to replace capacity it is still holding.
+*/}}
+{{- define "celeborn.worker.autoscaling.defaultTriggers" -}}
+{{- $selector := include "celeborn.worker.autoscaling.selector" . -}}
+{{- $live := printf "and on (instance) metrics_IsDecommissioningWorker_Value{%s} == 0" $selector -}}
+{{- if .Values.worker.autoscaling.diskUsage.enabled }}
+- type: prometheus
+  {{- /* Value, not KEDA's AverageValue default: a ratio must not be divided by the replicas. */}}
+  metricType: Value
+  metadata:
+    serverAddress: {{ required "worker.autoscaling.prometheusAddress is required by the built-in triggers" .Values.worker.autoscaling.prometheusAddress }}
+    query: max((1 - metrics_DeviceCelebornFreeBytes_Value{{ printf "{%s}" $selector }} / metrics_DeviceCelebornTotalBytes_Value{{ printf "{%s}" $selector }}) {{ $live }})
+    threshold: {{ .Values.worker.autoscaling.diskUsage.threshold | quote }}
+{{- end }}
+{{- if .Values.worker.autoscaling.activeSlots.enabled }}
+- type: prometheus
+  {{- /* AverageValue: the sum is total work and the threshold is the per-worker target. */}}
+  metricType: AverageValue
+  metadata:
+    serverAddress: {{ required "worker.autoscaling.prometheusAddress is required by the built-in triggers" .Values.worker.autoscaling.prometheusAddress }}
+    query: sum(metrics_ActiveSlotsCount_Value{{ printf "{%s}" $selector }} {{ $live }})
+    threshold: {{ .Values.worker.autoscaling.activeSlots.threshold | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
 Create the name of the worker podmonitor to use
 */}}
 {{- define "celeborn.worker.podMonitor.name" -}}

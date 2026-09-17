@@ -138,16 +138,18 @@ statefulset. With zone-aware replication enabled that is one per zone, so each z
 on its own load - which is what you want when applications are pinned to a zone, because
 their load is genuinely uneven across zones.
 
-Triggers are yours to define; the chart does not assume a metrics backend. They are rendered
-through `tpl` against the zone's context, so one definition covers every zone (with
-zone-aware replication off there is no zone, and `{{ .zone.name }}` renders `<no value>`):
+The chart ships two triggers, both querying metrics the worker already exports. Point them at
+a Prometheus-compatible endpoint and they work as they are:
 
 ```yaml
 worker:
   terminationGracePeriodSeconds: 21900   # see "Draining on scale-in" below
   autoscaling:
     enabled: true
+    prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
     maxReplicaCount: 6
+    activeSlots:
+      threshold: "500"   # tune, see below
     behavior:
       scaleDown:
         stabilizationWindowSeconds: 1800
@@ -155,36 +157,49 @@ worker:
           - type: Pods
             value: 1
             periodSeconds: 900
-    triggers:
-      - type: prometheus
-        metricType: Value
-        metadata:
-          serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
-          query: >-
-            max(1 -
-              metrics_DeviceCelebornFreeBytes_Value{role="Worker",zone="{{ .zone.name }}"}
-              / metrics_DeviceCelebornTotalBytes_Value{role="Worker",zone="{{ .zone.name }}"})
-          threshold: "0.7"
 ```
 
-Celeborn exports gauges as `metrics_<Name>_Value` and counters as `metrics_<Name>_Count`.
-The ones worth scaling on are `DeviceCelebornFreeBytes` / `DeviceCelebornTotalBytes` (disk
-headroom), `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held), `DirectMemoryUsageRatio`
-(the off-heap ceiling that pauses pushes), and `IsHighWorkload` / `PausePushDataStatus` (the
-worker is already in trouble). `IsDecommissioningWorker` is how you keep a draining worker from
-counting towards the load that triggered its own removal.
+**Disk usage** is the signal that bites first, since a worker that fills up stops accepting
+pushes. It scales on the fullest worker in the statefulset, as a fraction of Celeborn disk
+capacity:
 
-The `zone` label comes from `worker.zoneAwareReplication.metricsLabel`, which passes the zone
-into `celeborn.metrics.extraLabels` so the worker stamps it on everything it emits. Celeborn
-publishes no zone label of its own, and neither does the scrape, so without this a per-zone
-query has to match on pod names. `role="Worker"` matters too: masters report the device gauges
-for whichever volume holds the Ratis directory.
+```promql
+max((1 - metrics_DeviceCelebornFreeBytes_Value{...} / metrics_DeviceCelebornTotalBytes_Value{...})
+    and on (instance) metrics_IsDecommissioningWorker_Value{...} == 0)
+```
 
-Mind `metricType`. KEDA defaults to `AverageValue`, where the metric is treated as total work
-and the replica count becomes `ceil(metric / threshold)` - right for a sum like
-`sum(metrics_ActiveShuffleSize_Value{...})` against a per-worker byte target, wrong for a ratio,
-which would collapse the fleet to one or two pods. A saturation ratio needs `metricType: Value`,
-where the count becomes `ceil(replicas * metric / threshold)`.
+It uses `metricType: Value`, because a ratio must not be divided across replicas.
+
+**Active slots** scales on slots held per worker, as a total against a per-worker target:
+
+```promql
+sum(metrics_ActiveSlotsCount_Value{...} and on (instance) metrics_IsDecommissioningWorker_Value{...} == 0)
+```
+
+It uses `metricType: AverageValue`, so the replica count is `ceil(total / threshold)`.
+`activeSlots.threshold` is the one value you must tune - there is no natural default, since
+what counts as a busy worker depends on the workload. Watch
+`sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number of
+workers you want at that peak.
+
+Both exclude decommissioning workers. A worker that is draining still holds its disk and its
+slots for as long as it takes, and counting it would have the fleet scale out to replace
+capacity it has not released yet.
+
+Disable either with `diskUsage.enabled: false` / `activeSlots.enabled: false`, and add your own
+with `worker.autoscaling.triggers`, which are appended to the built-in ones and rendered
+through `tpl` against the zone's context, so `{{ .zone.name }}` resolves per zone.
+
+Celeborn exports gauges as `metrics_<Name>_Value` and counters as `metrics_<Name>_Count`. Other
+metrics worth scaling on are `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held),
+`DirectMemoryUsageRatio` (the off-heap ceiling that pauses pushes), and `IsHighWorkload` /
+`PausePushDataStatus` (the worker is already in trouble).
+
+The `zone` label the built-in queries select on comes from
+`worker.zoneAwareReplication.metricsLabel`, which passes the zone into
+`celeborn.metrics.extraLabels` so the worker stamps it on everything it emits. With that turned
+off the queries fall back to matching pod names. `role="Worker"` matters too: masters report the
+device gauges for whichever volume holds the Ratis directory.
 
 `minReplicaCount` defaults to the statefulset's own replica count, so a zone never scales
 below the size it was deployed at unless you set it explicitly.
