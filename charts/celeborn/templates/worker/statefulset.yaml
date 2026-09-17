@@ -32,6 +32,7 @@ The no-zone case iterates once over an empty dict, which `if .zone` treats as un
 {{- end }}
 {{- /* Render the body against a context carrying the zone, so `.` keeps working below. */}}
 {{- with dict "Values" $.Values "Release" $.Release "Chart" $.Chart "Capabilities" $.Capabilities "Template" $.Template "Files" $.Files "zone" $zone }}
+{{- $drainMount := and .Values.worker.autoscaling.enabled .Values.worker.autoscaling.drain.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -139,7 +140,7 @@ spec:
         - containerPort: {{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 }}
           name: metrics
           protocol: TCP
-        {{- $drain := and .Values.worker.autoscaling.enabled .Values.worker.autoscaling.drain.enabled }}
+        {{- $drain := $drainMount }}
         {{- if or $drain .Values.worker.env }}
         env:
         {{- if $drain }}
@@ -149,6 +150,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        - name: STS_NAME
+          value: {{ include "celeborn.worker.statefulSet.name" . }}
+        - name: WORKER_HTTP_PORT
+          value: {{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 | quote }}
         {{- end }}
         {{- with .Values.worker.env }}
         {{- toYaml . | nindent 8 }}
@@ -168,66 +173,22 @@ spec:
         - name: celeborn-conf
           subPath: metrics.properties
           mountPath: /opt/celeborn/conf/metrics.properties
+        {{- if $drainMount }}
+        - name: celeborn-conf
+          subPath: worker-drain.sh
+          mountPath: /opt/celeborn/drain/worker-drain.sh
+        {{- end }}
         {{- with .Values.worker.volumeMounts }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- if $drain }}
-        {{- /*
-        A scale-in must decommission (wait for the shuffle data to expire); a rollout or a
-        node drain must not, or every pod replacement would block for hours. The pod tells
-        them apart by its own ordinal: the statefulset controller lowers `spec.replicas`
-        before deleting pods on a scale-in, so an ordinal at or above the desired count is
-        being removed for good. Anything unreadable falls back to a graceful shutdown.
-        */}}
+        {{- /* The drain logic lives in files/worker-drain.sh, shipped in the config map. */}}
         lifecycle:
           preStop:
             exec:
               command:
               - /bin/sh
-              - -c
-              - |
-                set -u
-                SA=/var/run/secrets/kubernetes.io/serviceaccount
-                STS={{ include "celeborn.worker.statefulSet.name" . }}
-                # preStop output is not collected, so log through the main process.
-                log() { echo "celeborn preStop: $*" >/proc/1/fd/1 2>/dev/null || echo "celeborn preStop: $*"; }
-                ORDINAL=${POD_NAME:-}
-                ORDINAL=${ORDINAL##*-}
-                DESIRED=""
-                if [ -r "$SA/token" ]; then
-                  URL="https://kubernetes.default.svc/apis/apps/v1/namespaces/$(cat $SA/namespace)/statefulsets/$STS/scale"
-                  AUTH="Authorization: Bearer $(cat $SA/token)"
-                  if command -v curl >/dev/null 2>&1; then
-                    SCALE=$(curl -sS --cacert "$SA/ca.crt" -H "$AUTH" "$URL" 2>/dev/null)
-                  else
-                    SCALE=$(wget -q -O - --ca-certificate="$SA/ca.crt" --header="$AUTH" "$URL" 2>/dev/null)
-                  fi
-                  DESIRED=$(printf '%s' "$SCALE" | sed 's/"status".*//' | grep -o '"replicas":[0-9 ]*' | head -n 1 | tr -dc '0-9')
-                fi
-                case "$ORDINAL" in ''|*[!0-9]*) ORDINAL="" ;; esac
-                case "$DESIRED" in ''|*[!0-9]*) DESIRED="" ;; esac
-                EXIT_TYPE=GRACEFUL
-                if [ -n "$ORDINAL" ] && [ -n "$DESIRED" ] && [ "$ORDINAL" -ge "$DESIRED" ]; then
-                  EXIT_TYPE=DECOMMISSION
-                fi
-                if [ -z "$DESIRED" ]; then
-                  log "could not read $STS desired replicas - a scale-in will NOT decommission"
-                fi
-                log "ordinal=${ORDINAL:-unknown} desired=${DESIRED:-unknown} exit=$EXIT_TYPE"
-                BODY='{"type":"'"$EXIT_TYPE"'"}'
-                EXIT_URL="http://127.0.0.1:{{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 }}/api/v1/workers/exit"
-                if command -v curl >/dev/null 2>&1; then
-                  curl -sS -f -X POST -H 'Content-Type: application/json' -d "$BODY" "$EXIT_URL" >/dev/null
-                else
-                  wget -q -O /dev/null --header='Content-Type: application/json' --post-data="$BODY" "$EXIT_URL"
-                fi
-                if [ $? -eq 0 ]; then
-                  # Hold the pod open while the worker drains. It exits on its own once done,
-                  # and terminationGracePeriodSeconds bounds the wait.
-                  while :; do sleep 5; done
-                else
-                  log "exit request failed, falling through to SIGTERM"
-                fi
+              - /opt/celeborn/drain/worker-drain.sh
         {{- end }}
         {{- with .Values.worker.resources }}
         resources:
@@ -253,6 +214,10 @@ spec:
             path: log4j2.xml
           - key: metrics.properties
             path: metrics.properties
+          {{- if $drainMount }}
+          - key: worker-drain.sh
+            path: worker-drain.sh
+          {{- end }}
       {{- with .Values.worker.volumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}

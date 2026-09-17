@@ -231,7 +231,10 @@ which waits for the worker's shuffle keys to expire (up to
 the worker's HTTP API.
 
 `worker.autoscaling.drain.enabled` (on by default when autoscaling is enabled) adds a
-`preStop` hook that calls it. The hook must not decommission on a rolling update or a node
+`preStop` hook that calls it. The hook runs `files/worker-drain.sh`, shipped in the chart's
+config map and mounted at `/opt/celeborn/drain/worker-drain.sh`; it takes `POD_NAME`,
+`STS_NAME` and `WORKER_HTTP_PORT` from the environment, so the script itself is the same in
+every zone. The hook must not decommission on a rolling update or a node
 drain, or every pod replacement would block for hours, so it distinguishes the two: the
 statefulset controller lowers `spec.replicas` *before* deleting pods on a scale-in, so a pod
 whose ordinal is at or above the desired count is being removed for good and decommissions,

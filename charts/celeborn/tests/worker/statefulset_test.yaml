@@ -647,8 +647,13 @@ tests:
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].lifecycle
+      - notContains:
+          path: spec.template.spec.volumes[0].configMap.items
+          content:
+            key: worker-drain.sh
+            path: worker-drain.sh
 
-  - it: Should add the preStop drain hook if autoscaling and drain are enabled
+  - it: Should run the mounted drain script from the preStop hook
     template: worker/statefulset.yaml
     set:
       worker:
@@ -661,15 +666,36 @@ tests:
                 query: metrics_ActiveShuffleSize_Value
                 threshold: "1000"
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
-          pattern: STS=celeborn-worker
-      - matchRegex:
-          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
-          pattern: EXIT_TYPE=DECOMMISSION
-      - matchRegex:
-          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
-          pattern: 127\.0\.0\.1:9096/api/v1/workers/exit
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value:
+            - /bin/sh
+            - /opt/celeborn/drain/worker-drain.sh
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: celeborn-conf
+            subPath: worker-drain.sh
+            mountPath: /opt/celeborn/drain/worker-drain.sh
+      - contains:
+          path: spec.template.spec.volumes[0].configMap.items
+          content:
+            key: worker-drain.sh
+            path: worker-drain.sh
+
+  - it: Should pass the pod, statefulset and port to the drain script
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        autoscaling:
+          enabled: true
+          triggers:
+            - type: prometheus
+              metadata:
+                serverAddress: http://prometheus:9090
+                query: metrics_ActiveShuffleSize_Value
+                threshold: "1000"
+    asserts:
       - equal:
           path: spec.template.spec.containers[0].env[0]
           value:
@@ -677,11 +703,18 @@ tests:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.name
-      - notMatchRegex:
-          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
-          pattern: HOSTNAME
+      - equal:
+          path: spec.template.spec.containers[0].env[1]
+          value:
+            name: STS_NAME
+            value: celeborn-worker
+      - equal:
+          path: spec.template.spec.containers[0].env[2]
+          value:
+            name: WORKER_HTTP_PORT
+            value: "9096"
 
-  - it: Should point the preStop drain hook at the zone statefulset
+  - it: Should point the drain script at the zone statefulset
     template: worker/statefulset.yaml
     set:
       worker:
@@ -698,9 +731,9 @@ tests:
                 query: metrics_ActiveShuffleSize_Value
                 threshold: "1000"
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
-          pattern: STS=celeborn-worker-us-east-1a
+      - equal:
+          path: spec.template.spec.containers[0].env[1].value
+          value: celeborn-worker-us-east-1a
 
   - it: Should not add the preStop drain hook if `worker.autoscaling.drain` is disabled
     template: worker/statefulset.yaml
