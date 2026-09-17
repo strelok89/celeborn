@@ -138,7 +138,8 @@ statefulset. With zone-aware replication enabled that is one per zone, so each z
 on its own load - which is what you want when applications are pinned to a zone, because
 their load is genuinely uneven across zones.
 
-The chart ships two triggers, both querying metrics the worker already exports. Point them at
+The chart ships two triggers - disk and off-heap memory, the two resources whose exhaustion
+takes a worker out of service - both querying metrics the worker already exports. Point them at
 a Prometheus-compatible endpoint and they work as they are:
 
 ```yaml
@@ -148,8 +149,6 @@ worker:
     enabled: true
     prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
     maxReplicaCount: 6
-    activeSlots:
-      threshold: "500"   # absolute slot count, tune it - see below
     behavior:
       scaleDown:
         stabilizationWindowSeconds: 1800
@@ -170,7 +169,23 @@ max((1 - metrics_DeviceCelebornFreeBytes_Value{...} / metrics_DeviceCelebornTota
 
 It uses `metricType: Value`, because a ratio must not be divided across replicas.
 
-**Active slots** scales on slots held per worker, as a total against a per-worker target:
+**Off-heap memory** is the other way a worker takes itself out of service: it stops accepting
+pushes at `celeborn.worker.directMemoryRatioToPauseReceive` (0.85) and replication at 0.95.
+`DirectMemoryUsageRatio` is `memoryUsage / maxDirectMemory`, so it is already a fraction of
+`CELEBORN_WORKER_OFFHEAP_MEMORY`:
+
+```promql
+max(metrics_DirectMemoryUsageRatio_Value{...} and on (instance) metrics_IsDecommissioningWorker_Value{...} == 0)
+```
+
+Also `metricType: Value`. Keep the threshold below 0.85 so capacity arrives before pushes
+pause; the 0.70 default leaves the gap between scaling out and throttling.
+
+**Active slots** is off by default. Slot capacity is derived from disk space
+(`maxSlots = totalSpace / estimatedPartitionSize`), so it largely restates `diskUsage`; what it
+adds is timing, since slots are allocated when a stage starts and the data is written after.
+Enable it with `activeSlots.enabled: true`. It scales on slots held, as a total against a
+per-worker target:
 
 ```promql
 sum(metrics_ActiveSlotsCount_Value{...} and on (instance) metrics_IsDecommissioningWorker_Value{...} == 0)

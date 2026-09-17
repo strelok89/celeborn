@@ -142,6 +142,15 @@ would have the fleet scale out to replace capacity it is still holding.
     query: max((1 - metrics_DeviceCelebornFreeBytes_Value{{ printf "{%s}" $selector }} / metrics_DeviceCelebornTotalBytes_Value{{ printf "{%s}" $selector }}) {{ $live }})
     threshold: {{ .Values.worker.autoscaling.diskUsage.threshold | quote }}
 {{- end }}
+{{- if .Values.worker.autoscaling.memoryUsage.enabled }}
+- type: prometheus
+  {{- /* Value, not KEDA's AverageValue default: a ratio must not be divided by the replicas. */}}
+  metricType: Value
+  metadata:
+    serverAddress: {{ required "worker.autoscaling.prometheusAddress is required by the built-in triggers" .Values.worker.autoscaling.prometheusAddress }}
+    query: max(metrics_DirectMemoryUsageRatio_Value{{ printf "{%s}" $selector }} {{ $live }})
+    threshold: {{ .Values.worker.autoscaling.memoryUsage.threshold | quote }}
+{{- end }}
 {{- if .Values.worker.autoscaling.activeSlots.enabled }}
 - type: prometheus
   {{- /* AverageValue: the sum is total work and the threshold is the per-worker target. */}}

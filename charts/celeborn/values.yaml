@@ -284,10 +284,23 @@ worker:
       # `maxSlots` from its total space, so the two track each other. See README.md.
       threshold: "0.70"
 
-    # Scale out when workers are holding too many slots each.
+    # Scale out when workers run short of off-heap memory. A worker stops accepting pushes at
+    # `celeborn.worker.directMemoryRatioToPauseReceive`, so this is the other way a worker
+    # takes itself out of service. See README.md.
+    memoryUsage:
+      # -- Whether to add the off-heap memory trigger.
+      enabled: true
+      # -- Fraction of the worker's off-heap memory in use, between 0 and 1. Keep it below
+      # `celeborn.worker.directMemoryRatioToPauseReceive` (0.85) so capacity arrives before
+      # pushes pause.
+      threshold: "0.70"
+
+    # Scale out when workers are holding too many slots each. Off by default: slot capacity is
+    # derived from disk space, so this largely restates `diskUsage`. What it adds is timing -
+    # slots are allocated before the data is written. See README.md.
     activeSlots:
       # -- Whether to add the active slots trigger.
-      enabled: true
+      enabled: false
       # -- Target active slots per worker, as an absolute count. It cannot be a percentage:
       # no metric exports a worker's slot capacity. Deployment-specific, so tune it: watch
       # `sum(metrics_ActiveSlotsCount_Value{role="Worker"})` at peak and divide by the number
