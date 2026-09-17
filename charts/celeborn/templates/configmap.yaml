@@ -51,7 +51,7 @@ data:
 
   ratis-log4j.properties: |-
     {{- .Files.Get "files/conf/ratis-log4j.properties" | nindent 4 }}
-{{- if and .Values.worker.autoscaling.enabled .Values.worker.autoscaling.drain.enabled }}
+{{- if .Values.worker.drain.enabled }}
 
   worker-drain.sh: |-
     {{- .Files.Get "files/worker-drain.sh" | nindent 4 }}

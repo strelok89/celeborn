@@ -657,14 +657,8 @@ tests:
     template: worker/statefulset.yaml
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
     asserts:
       - equal:
           path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
@@ -687,14 +681,8 @@ tests:
     template: worker/statefulset.yaml
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[0]
@@ -723,16 +711,9 @@ tests:
     template: worker/statefulset.yaml
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          drain:
-            alwaysDecommission: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
+          alwaysDecommission: true
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[3].value
@@ -746,33 +727,19 @@ tests:
           enabled: true
           zones:
             - name: us-east-1a
-        autoscaling:
+        drain:
           enabled: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[1].value
           value: celeborn-worker-us-east-1a
 
-  - it: Should not add the preStop drain hook if `worker.autoscaling.drain` is disabled
+  - it: Should not add the preStop drain hook if `worker.drain` is disabled
     template: worker/statefulset.yaml
     set:
       worker:
-        autoscaling:
-          enabled: true
-          drain:
-            enabled: false
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
+        drain:
+          enabled: false
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].lifecycle

@@ -131,6 +131,67 @@ its identity, so:
 
 Treat it as a maintenance-window change rather than a rolling update.
 
+## Draining a worker before it is removed
+
+Deleting a worker pod - by scaling in, rolling out, or draining its node - reaches Celeborn as
+a `SIGTERM`. That never enters the decommission path, so the worker leaves with its shuffle data
+and any application still reading from it loses that stage. Celeborn's safe drain is
+`DECOMMISSION`, which waits for the worker's shuffle keys to expire (up to
+`celeborn.worker.decommission.forceExitTimeout`, 6h by default) and is only reachable through
+the worker's HTTP API.
+
+This is worth having with a fixed replica count, not only with `worker.autoscaling` - any
+rollout removes workers too.
+
+`worker.drain.enabled` adds a `preStop` hook that calls it. The hook runs `files/worker-drain.sh`, shipped in the chart's
+config map and mounted at `/opt/celeborn/drain/worker-drain.sh`; it takes `POD_NAME`,
+`STS_NAME` and `WORKER_HTTP_PORT` from the environment, so the script itself is the same in
+every zone. The hook must not decommission on a rolling update or a node
+drain, or every pod replacement would block for hours, so it distinguishes the two: the
+statefulset controller lowers `spec.replicas` *before* deleting pods on a scale-in, so a pod
+whose ordinal is at or above the desired count is being removed for good and decommissions,
+while any other pod shuts down gracefully and comes back. If the desired count cannot be read
+the hook falls back to a graceful shutdown, so a broken lookup cannot stall a rollout.
+
+This needs three things:
+
+- `rbac.create: true`. The chart adds `get` on `statefulsets/scale` to the role when the
+  drain is enabled; the hook reads the count with the pod's own service account.
+- `celeborn.worker.graceful.shutdown.enabled: true`, so the non-scale-in path actually
+  persists state and recovers on restart.
+- `worker.terminationGracePeriodSeconds` above `celeborn.worker.decommission.forceExitTimeout`.
+  This is an upper bound, not a wait: a graceful shutdown still finishes in
+  `celeborn.worker.graceful.shutdown.timeout`, so a long grace period does not slow rollouts
+  down.
+
+It is off by default. Turn it on alongside `worker.autoscaling`, or leave it off and treat
+scale-in as destructive, only letting it happen when the fleet is idle.
+
+### When the worker's storage does not outlive the pod
+
+Telling a scale-in from a rollout is only worth doing if a rollout can recover. Graceful
+shutdown persists committed file metadata to `celeborn.worker.graceful.shutdown.recoverPath` and
+recovers from it when the worker comes back - which needs both that path and
+`celeborn.worker.storage.dirs` to survive the pod. On an `emptyDir`, or on instance-store disks
+that are wiped when the node is replaced, neither does: the worker returns to empty disks, there
+is nothing to recover, and the in-flight shuffles it was holding are lost.
+
+`worker.drain.alwaysDecommission: true` drops the distinction and decommissions on
+every termination, so a worker is never removed while an application still needs what is on it.
+It also needs no Kubernetes API access, since it never reads the replica count, and the chart
+leaves the `statefulsets/scale` rule out of the role.
+
+What it costs:
+
+- Rollouts and node drains wait for the drain as well, bounded by
+  `celeborn.worker.decommission.forceExitTimeout` rather than
+  `celeborn.worker.graceful.shutdown.timeout`. With `OrderedReady` a rollout drains each worker
+  in turn, so budget accordingly.
+- Anything that evicts a pod on a deadline shorter than the drain will still kill it mid-drain -
+  a cluster autoscaler reclaiming a node, or a spot interruption with its two-minute notice.
+  Make sure the node pool's own grace period is at least as long as you expect a drain to take,
+  or accept that those paths behave as they did before.
+
 ## Autoscaling workers with KEDA
 
 `worker.autoscaling` creates a [KEDA](https://keda.sh) `ScaledObject` for each worker
@@ -144,7 +205,9 @@ a Prometheus-compatible endpoint and they work as they are:
 
 ```yaml
 worker:
-  terminationGracePeriodSeconds: 21900   # see "Draining on scale-in" below
+  terminationGracePeriodSeconds: 21900   # see "Draining a worker before it is removed"
+  drain:
+    enabled: true
   autoscaling:
     enabled: true
     prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
@@ -213,6 +276,10 @@ device gauges for whichever volume holds the Ratis directory.
 `minReplicaCount` defaults to the statefulset's own replica count, so a zone never scales
 below the size it was deployed at unless you set it explicitly.
 
+Enable `worker.drain` as well. Scaling in deletes worker pods, and without the drain those
+workers leave with shuffle data an application may still need - see
+[Draining a worker before it is removed](#draining-a-worker-before-it-is-removed).
+
 Three properties of this fleet are worth sizing for. Scaling out is slow: a new worker
 usually needs a new node, and it starts with no shuffle data on it, so autoscaling answers
 sustained load changes rather than bursts. Scaling in always removes the highest ordinal,
@@ -220,65 +287,6 @@ which is not necessarily the least busy worker. And while a worker drains, its s
 cannot grow - so a scale-in decided at low load leaves that zone one worker short until the
 drain finishes. Pace scale-in conservatively with `behavior.scaleDown`, and consider
 excluding draining workers from the trigger query.
-
-### Draining on scale-in
-
-Kubernetes scale-in only deletes a pod, which reaches Celeborn as a `SIGTERM`. That never
-enters the decommission path, so a removed worker takes its shuffle data with it and any
-application still reading from it loses that stage. Celeborn's safe drain is `DECOMMISSION`,
-which waits for the worker's shuffle keys to expire (up to
-`celeborn.worker.decommission.forceExitTimeout`, 6h by default) and is only reachable through
-the worker's HTTP API.
-
-`worker.autoscaling.drain.enabled` (on by default when autoscaling is enabled) adds a
-`preStop` hook that calls it. The hook runs `files/worker-drain.sh`, shipped in the chart's
-config map and mounted at `/opt/celeborn/drain/worker-drain.sh`; it takes `POD_NAME`,
-`STS_NAME` and `WORKER_HTTP_PORT` from the environment, so the script itself is the same in
-every zone. The hook must not decommission on a rolling update or a node
-drain, or every pod replacement would block for hours, so it distinguishes the two: the
-statefulset controller lowers `spec.replicas` *before* deleting pods on a scale-in, so a pod
-whose ordinal is at or above the desired count is being removed for good and decommissions,
-while any other pod shuts down gracefully and comes back. If the desired count cannot be read
-the hook falls back to a graceful shutdown, so a broken lookup cannot stall a rollout.
-
-This needs three things:
-
-- `rbac.create: true`. The chart adds `get` on `statefulsets/scale` to the role when the
-  drain is enabled; the hook reads the count with the pod's own service account.
-- `celeborn.worker.graceful.shutdown.enabled: true`, so the non-scale-in path actually
-  persists state and recovers on restart.
-- `worker.terminationGracePeriodSeconds` above `celeborn.worker.decommission.forceExitTimeout`.
-  This is an upper bound, not a wait: a graceful shutdown still finishes in
-  `celeborn.worker.graceful.shutdown.timeout`, so a long grace period does not slow rollouts
-  down.
-
-Set `worker.autoscaling.drain.enabled: false` to opt out, but then treat scale-in as
-destructive and only let it happen when the fleet is idle.
-
-### When the worker's storage does not outlive the pod
-
-Telling a scale-in from a rollout is only worth doing if a rollout can recover. Graceful
-shutdown persists committed file metadata to `celeborn.worker.graceful.shutdown.recoverPath` and
-recovers from it when the worker comes back - which needs both that path and
-`celeborn.worker.storage.dirs` to survive the pod. On an `emptyDir`, or on instance-store disks
-that are wiped when the node is replaced, neither does: the worker returns to empty disks, there
-is nothing to recover, and the in-flight shuffles it was holding are lost.
-
-`worker.autoscaling.drain.alwaysDecommission: true` drops the distinction and decommissions on
-every termination, so a worker is never removed while an application still needs what is on it.
-It also needs no Kubernetes API access, since it never reads the replica count, and the chart
-leaves the `statefulsets/scale` rule out of the role.
-
-What it costs:
-
-- Rollouts and node drains wait for the drain as well, bounded by
-  `celeborn.worker.decommission.forceExitTimeout` rather than
-  `celeborn.worker.graceful.shutdown.timeout`. With `OrderedReady` a rollout drains each worker
-  in turn, so budget accordingly.
-- Anything that evicts a pod on a deadline shorter than the drain will still kill it mid-drain -
-  a cluster autoscaler reclaiming a node, or a spot interruption with its two-minute notice.
-  Make sure the node pool's own grace period is at least as long as you expect a drain to take,
-  or accept that those paths behave as they did before.
 
 ### Helm and the autoscaler both own `replicas`
 

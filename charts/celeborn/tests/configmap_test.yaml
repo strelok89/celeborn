@@ -63,17 +63,11 @@ tests:
       - notExists:
           path: data["worker-drain.sh"]
 
-  - it: Should ship the worker drain script when the autoscaling drain is enabled
+  - it: Should ship the worker drain script when the drain is enabled
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
     asserts:
       - matchRegex:
           path: data["worker-drain.sh"]

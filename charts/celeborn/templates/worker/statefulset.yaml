@@ -32,7 +32,7 @@ The no-zone case iterates once over an empty dict, which `if .zone` treats as un
 {{- end }}
 {{- /* Render the body against a context carrying the zone, so `.` keeps working below. */}}
 {{- with dict "Values" $.Values "Release" $.Release "Chart" $.Chart "Capabilities" $.Capabilities "Template" $.Template "Files" $.Files "zone" $zone }}
-{{- $drainMount := and .Values.worker.autoscaling.enabled .Values.worker.autoscaling.drain.enabled }}
+{{- $drainMount := .Values.worker.drain.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -155,7 +155,7 @@ spec:
         - name: WORKER_HTTP_PORT
           value: {{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 | quote }}
         - name: ALWAYS_DECOMMISSION
-          value: {{ .Values.worker.autoscaling.drain.alwaysDecommission | quote }}
+          value: {{ .Values.worker.drain.alwaysDecommission | quote }}
         {{- end }}
         {{- with .Values.worker.env }}
         {{- toYaml . | nindent 8 }}

@@ -27,7 +27,7 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["create", "list", "delete"]
-{{- if and .Values.worker.autoscaling.enabled .Values.worker.autoscaling.drain.enabled (not .Values.worker.autoscaling.drain.alwaysDecommission) }}
+{{- if and .Values.worker.drain.enabled (not .Values.worker.drain.alwaysDecommission) }}
 {{- /*
 The worker's preStop hook reads its own statefulset's desired replica count, to tell a
 scale-in from a rollout. With alwaysDecommission it never asks, so it needs no access.

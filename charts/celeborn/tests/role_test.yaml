@@ -58,17 +58,11 @@ tests:
               resources: ["pods"]
               verbs: ["create", "list", "delete"]
 
-  - it: Should grant statefulset scale access when the autoscaling drain is enabled
+  - it: Should grant statefulset scale access when the drain is enabled
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
     asserts:
       - equal:
           path: rules[1]
@@ -80,16 +74,9 @@ tests:
   - it: Should not grant statefulset scale access when the drain always decommissions
     set:
       worker:
-        autoscaling:
+        drain:
           enabled: true
-          drain:
-            alwaysDecommission: true
-          triggers:
-            - type: prometheus
-              metadata:
-                serverAddress: http://prometheus:9090
-                query: metrics_ActiveShuffleSize_Value
-                threshold: "1000"
+          alwaysDecommission: true
     asserts:
       - equal:
           path: rules
