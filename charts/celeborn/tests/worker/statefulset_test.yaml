@@ -726,3 +726,54 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[0].name
           value: CELEBORN_WORKER_MEMORY
+
+  - it: Should not set the zone metric label when zone-aware replication is off
+    template: worker/statefulset.yaml
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[4]
+          pattern: extraLabels
+
+  - it: Should publish the zone as a metric label in each zone
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+            - name: us-east-1b
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[4]
+          pattern: -Dceleborn\.metrics\.extraLabels=zone=us-east-1b
+        documentIndex: 1
+
+  - it: Should append the zone to any configured extra metric labels
+    template: worker/statefulset.yaml
+    set:
+      celeborn:
+        celeborn.metrics.extraLabels: env=prod
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[4]
+          pattern: -Dceleborn\.metrics\.extraLabels=env=prod,zone=us-east-1a
+
+  - it: Should not set the zone metric label if `metricsLabel` is false
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          metricsLabel: false
+          zones:
+            - name: us-east-1a
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[4]
+          pattern: extraLabels

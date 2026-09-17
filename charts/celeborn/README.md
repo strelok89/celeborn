@@ -162,8 +162,8 @@ worker:
           serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
           query: >-
             max(1 -
-              metrics_DeviceCelebornFreeBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"}
-              / metrics_DeviceCelebornTotalBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"})
+              metrics_DeviceCelebornFreeBytes_Value{role="Worker",zone="{{ .zone.name }}"}
+              / metrics_DeviceCelebornTotalBytes_Value{role="Worker",zone="{{ .zone.name }}"})
           threshold: "0.7"
 ```
 
@@ -174,10 +174,11 @@ headroom), `ActiveShuffleSize` and `ActiveShuffleFileCount` (data held), `Direct
 worker is already in trouble). `IsDecommissioningWorker` is how you keep a draining worker from
 counting towards the load that triggered its own removal.
 
-There is no zone label on these metrics, so a per-zone query selects on the pod name - which
-works precisely because zone-aware replication puts the zone in the statefulset name, and hence
-in every pod name under it. `role="Worker"` matters too: masters report the device gauges for
-whichever volume holds the Ratis directory.
+The `zone` label comes from `worker.zoneAwareReplication.metricsLabel`, which passes the zone
+into `celeborn.metrics.extraLabels` so the worker stamps it on everything it emits. Celeborn
+publishes no zone label of its own, and neither does the scrape, so without this a per-zone
+query has to match on pod names. `role="Worker"` matters too: masters report the device gauges
+for whichever volume holds the Ratis directory.
 
 Mind `metricType`. KEDA defaults to `AverageValue`, where the metric is treated as total work
 and the replica count becomes `ceil(metric / threshold)` - right for a sum like

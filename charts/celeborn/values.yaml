@@ -230,6 +230,10 @@ worker:
   zoneAwareReplication:
     # -- Whether to deploy one Celeborn worker statefulset per zone.
     enabled: false
+    # -- Publish the zone as a `zone` label on every metric the worker emits, through
+    # `celeborn.metrics.extraLabels`, so autoscaling and dashboards can select a zone without
+    # matching on pod names. Appends to any `celeborn.metrics.extraLabels` already configured.
+    metricsLabel: true
     # -- Zone definitions. Redefine the whole list to change any part of it, as YAML cannot
     # merge list entries.
     zones: []
@@ -275,7 +279,7 @@ worker:
     #   metricType: Value
     #   metadata:
     #     serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
-    #     query: max(1 - metrics_DeviceCelebornFreeBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"} / metrics_DeviceCelebornTotalBytes_Value{role="Worker",pod=~"celeborn-worker-{{ .zone.name }}-.*"})
+    #     query: max(1 - metrics_DeviceCelebornFreeBytes_Value{role="Worker",zone="{{ .zone.name }}"} / metrics_DeviceCelebornTotalBytes_Value{role="Worker",zone="{{ .zone.name }}"})
     #     threshold: "0.7"
 
     # Scale-in drain. Kubernetes scale-in only sends SIGTERM, which never reaches Celeborn's

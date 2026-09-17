@@ -120,7 +120,21 @@ spec:
           true; do
             echo "waiting for master";
             sleep 2;
-          done && exec /opt/celeborn/sbin/start-worker.sh
+          {{- /*
+          Publish the zone as a metric label, so queries select on it rather than on pod names.
+          The conf file is loaded with setIfMissing, so a system property wins over it, and
+          start-worker.sh builds CELEBORN_JAVA_OPTS from CELEBORN_WORKER_JAVA_OPTS - so this
+          composes with whatever `worker.env` already sets.
+          */}}
+          {{- $zoneOpts := "" }}
+          {{- if and .zone .Values.worker.zoneAwareReplication.metricsLabel }}
+          {{- $extraLabels := printf "zone=%s" .zone.name }}
+          {{- with get .Values.celeborn "celeborn.metrics.extraLabels" }}
+          {{- $extraLabels = printf "%s,%s" . $extraLabels }}
+          {{- end }}
+          {{- $zoneOpts = printf "export CELEBORN_WORKER_JAVA_OPTS=\"${CELEBORN_WORKER_JAVA_OPTS:-} -Dceleborn.metrics.extraLabels=%s\" && " $extraLabels }}
+          {{- end }}
+          done && {{ $zoneOpts }}exec /opt/celeborn/sbin/start-worker.sh
         ports:
         - containerPort: {{ get .Values.celeborn "celeborn.worker.http.port" | default 9096 }}
           name: metrics
