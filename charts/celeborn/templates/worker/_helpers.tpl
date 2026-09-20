@@ -98,7 +98,8 @@ zone gets `ceil(replicas / zones)` unless the zone overrides it.
 */}}
 {{- define "celeborn.worker.replicas" -}}
 {{- if .zone -}}
-{{- if .zone.replicas -}}
+{{- /* Key presence, not truthiness: an explicit 0 parks a zone without removing it. */ -}}
+{{- if and (hasKey .zone "replicas") (not (kindIs "invalid" .zone.replicas)) -}}
 {{ .zone.replicas }}
 {{- else -}}
 {{ divf .Values.worker.replicas (len .Values.worker.zoneAwareReplication.zones) | ceil | int }}

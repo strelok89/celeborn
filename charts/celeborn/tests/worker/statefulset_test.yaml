@@ -737,9 +737,11 @@ tests:
         drain:
           enabled: true
     asserts:
-      - equal:
-          path: spec.template.spec.containers[0].env[2].value
-          value: celeborn-worker-us-east-1a
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: STS_NAME
+            value: celeborn-worker-us-east-1a
 
   - it: Should not add the preStop drain hook if `worker.drain` is disabled
     template: worker/statefulset.yaml
@@ -775,9 +777,15 @@ tests:
             - name: us-east-1a
             - name: us-east-1b
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELEBORN_ZONE_METRIC_LABELS
+            value: zone=us-east-1b
+        documentIndex: 1
       - matchRegex:
           path: spec.template.spec.containers[0].command[4]
-          pattern: -Dceleborn\.metrics\.extraLabels=zone=us-east-1b
+          pattern: extraLabels=\$CELEBORN_ZONE_METRIC_LABELS
         documentIndex: 1
 
   - it: Should append the zone to any configured extra metric labels
@@ -791,9 +799,11 @@ tests:
           zones:
             - name: us-east-1a
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[4]
-          pattern: -Dceleborn\.metrics\.extraLabels=env=prod,zone=us-east-1a
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELEBORN_ZONE_METRIC_LABELS
+            value: env=prod,zone=us-east-1a
 
   - it: Should not set the zone metric label if `metricsLabel` is false
     template: worker/statefulset.yaml
@@ -834,3 +844,62 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: worker.zoneAwareReplication.zones has duplicate names
+
+  - it: "Should honour an explicit `zones[].replicas: 0`"
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        replicas: 6
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+              replicas: 0
+            - name: us-east-1b
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 0
+        documentIndex: 0
+      - equal:
+          path: spec.replicas
+          value: 3
+        documentIndex: 1
+
+  - it: Should let an empty `zones[].affinity` clear the chart affinity for that zone
+    template: worker/statefulset.yaml
+    set:
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+              affinity: {}
+            - name: us-east-1b
+    asserts:
+      - notExists:
+          path: spec.template.spec.affinity
+        documentIndex: 0
+      - exists:
+          path: spec.template.spec.affinity.podAntiAffinity
+        documentIndex: 1
+
+  - it: Should not interpolate the metric label value into the start command
+    template: worker/statefulset.yaml
+    set:
+      celeborn:
+        celeborn.metrics.extraLabels: env=$(id -u)
+      worker:
+        zoneAwareReplication:
+          enabled: true
+          zones:
+            - name: us-east-1a
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELEBORN_ZONE_METRIC_LABELS
+            value: env=$(id -u),zone=us-east-1a
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[4]
+          pattern: id -u

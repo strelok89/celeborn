@@ -43,6 +43,18 @@ The no-zone case iterates once over an empty dict, which `if .zone` treats as un
 {{- /* Render the body against a context carrying the zone, so `.` keeps working below. */}}
 {{- with dict "Values" $.Values "Release" $.Release "Chart" $.Chart "Capabilities" $.Capabilities "Template" $.Template "Files" $.Files "zone" $zone }}
 {{- $drainMount := .Values.worker.drain.enabled }}
+{{- /*
+Computed once: used both as an env var and referenced from the start command. The value is
+never interpolated into the shell string - `$()` or a quote in a legitimate label would
+otherwise be evaluated by /bin/sh at startup.
+*/}}
+{{- $zoneMetricLabels := "" }}
+{{- if and $zone .Values.worker.zoneAwareReplication.metricsLabel }}
+{{- $zoneMetricLabels = printf "zone=%s" $zone.name }}
+{{- with get .Values.celeborn "celeborn.metrics.extraLabels" }}
+{{- $zoneMetricLabels = printf "%s,%s" . $zoneMetricLabels }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -138,12 +150,8 @@ spec:
           composes with whatever `worker.env` already sets.
           */}}
           {{- $zoneOpts := "" }}
-          {{- if and .zone .Values.worker.zoneAwareReplication.metricsLabel }}
-          {{- $extraLabels := printf "zone=%s" .zone.name }}
-          {{- with get .Values.celeborn "celeborn.metrics.extraLabels" }}
-          {{- $extraLabels = printf "%s,%s" . $extraLabels }}
-          {{- end }}
-          {{- $zoneOpts = printf "export CELEBORN_WORKER_JAVA_OPTS=\"${CELEBORN_WORKER_JAVA_OPTS:-} -Dceleborn.metrics.extraLabels=%s\" && " $extraLabels }}
+          {{- if $zoneMetricLabels }}
+          {{- $zoneOpts = "export CELEBORN_WORKER_JAVA_OPTS=\"${CELEBORN_WORKER_JAVA_OPTS:-} -Dceleborn.metrics.extraLabels=$CELEBORN_ZONE_METRIC_LABELS\" && " }}
           {{- end }}
           done && {{ $zoneOpts }}exec /opt/celeborn/sbin/start-worker.sh
         ports:
@@ -151,8 +159,12 @@ spec:
           name: metrics
           protocol: TCP
         {{- $drain := $drainMount }}
-        {{- if or $drain .Values.worker.env }}
+        {{- if or $drain $zoneMetricLabels .Values.worker.env }}
         env:
+        {{- with $zoneMetricLabels }}
+        - name: CELEBORN_ZONE_METRIC_LABELS
+          value: {{ . | quote }}
+        {{- end }}
         {{- if $drain }}
         {{- /* Not $HOSTNAME: with worker.hostNetwork that is the node name, whose trailing
         number would be read as an ordinal and decommission the worker on every rollout. */}}
@@ -244,7 +256,8 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $affinity := .Values.worker.affinity }}
-      {{- if and .zone .zone.affinity }}
+      {{- /* Key presence, not truthiness: `affinity: {}` clears the global one for this zone. */}}
+      {{- if and .zone (hasKey .zone "affinity") }}
       {{- $affinity = .zone.affinity }}
       {{- end }}
       {{- with $affinity }}
