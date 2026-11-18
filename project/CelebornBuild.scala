@@ -52,7 +52,8 @@ object Dependencies {
   val findbugsVersion = "1.3.9"
   val guavaVersion = "33.1.0-jre"
   val hadoopVersion = "3.4.3"
-  val awsS3Version = "1.12.532"
+  // The AWS SDK v2 release hadoop-aws (hadoopVersion) is built and tested against.
+  val awsSdkVersion = "2.35.4"
   val aliyunOssVersion = "3.13.0"
   val junitInterfaceVersion = "0.13.3"
   // don't forget update `junitInterfaceVersion` when we upgrade junit
@@ -131,11 +132,16 @@ object Dependencies {
     ExclusionRule("jline", "jline"),
     ExclusionRule("log4j", "log4j"),
     ExclusionRule("org.slf4j", "slf4j-log4j12"))
+  // hadoop-aws depends on the whole AWS SDK v2 bundle; Celeborn ships only the modules it uses.
   val hadoopAws = "org.apache.hadoop" % "hadoop-aws" % hadoopVersion excludeAll (
-    ExclusionRule("com.amazonaws", "aws-java-sdk-bundle"))
-  val awsS3 = "com.amazonaws" % "aws-java-sdk-s3" % awsS3Version
-  // Needed for com.amazonaws.auth.WebIdentityTokenCredentialsProvider
-  val awsSTS = "com.amazonaws" % "aws-java-sdk-sts" % awsS3Version
+    ExclusionRule("software.amazon.awssdk", "bundle"),
+    ExclusionRule("software.amazon.s3.analyticsaccelerator", "analyticsaccelerator-s3"))
+  // The S3 clients use the Apache HTTP client; the Netty one would bring a second Netty.
+  val awsS3 = "software.amazon.awssdk" % "s3" % awsSdkVersion excludeAll (
+    ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
+  // Needed for software.amazon.awssdk.auth.credentials.WebIdentityTokenFileCredentialsProvider
+  val awsSTS = "software.amazon.awssdk" % "sts" % awsSdkVersion excludeAll (
+    ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
   val commonsCollections = "commons-collections" % "commons-collections" % commonsCollectionsVersion
   val hadoopAliyun = "org.apache.hadoop" % "hadoop-aliyun" % hadoopVersion
   val aliyunOss = "com.aliyun.oss" % "aliyun-sdk-oss" % aliyunOssVersion
