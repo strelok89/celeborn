@@ -203,11 +203,15 @@
 ------------------------------------------------------------------------------------
 This project bundles the following dependencies under the Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0.txt):
 
-com.amazonaws:aws-java-sdk-bundle
+com.amazonaws:aws-java-sdk-core
+com.amazonaws:aws-java-sdk-kms
+com.amazonaws:aws-java-sdk-s3
 com.amazonaws:aws-java-sdk-sts
+com.amazonaws:jmespath-java
 com.fasterxml.jackson.core:jackson-annotations
 com.fasterxml.jackson.core:jackson-core
 com.fasterxml.jackson.core:jackson-databind
+com.fasterxml.jackson.dataformat:jackson-dataformat-cbor
 com.fasterxml.jackson.dataformat:jackson-dataformat-yaml
 com.fasterxml.jackson.datatype:jackson-datatype-jsr310
 com.fasterxml.jackson.jaxrs:jackson-jaxrs-base
@@ -220,6 +224,7 @@ com.google.guava:guava
 com.lmax:disruptor
 com.thoughtworks.paranamer:paranamer
 commons-cli:commons-cli
+commons-codec:commons-codec
 commons-io:commons-io
 commons-logging:commons-logging
 com.zaxxer:HikariCP
@@ -263,12 +268,15 @@ io.swagger.core.v3:swagger-core
 io.swagger.core.v3:swagger-integration
 io.swagger.core.v3:swagger-jaxrs2
 io.swagger.core.v3:swagger-models
+joda-time:joda-time
 me.bechberger:ap-loader-all
 org.apache.commons:commons-crypto
 org.apache.commons:commons-lang3
 org.apache.hadoop:hadoop-aws
 org.apache.hadoop:hadoop-client-api
 org.apache.hadoop:hadoop-client-runtime
+org.apache.httpcomponents:httpclient
+org.apache.httpcomponents:httpcore
 org.apache.httpcomponents.client5:httpclient5
 org.apache.httpcomponents.core5:httpcore5
 org.apache.httpcomponents.core5:httpcore5-h2
@@ -314,6 +322,7 @@ org.scala-lang:scala-library
 org.scala-lang:scala-reflect
 org.slf4j:jcl-over-slf4j
 org.webjars:swagger-ui
+org.wildfly.openssl:wildfly-openssl
 org.xerial.snappy:snappy-java
 org.yaml:snakeyaml
 

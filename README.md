@@ -94,6 +94,7 @@ To build Celeborn with AWS S3 support MPU, please use the following command
 ```shell
 ./build/make-distribution.sh --sbt-enabled -Pspark-3.4 -Pjdk-8 -Paws
 ```
+Binary releases and the `apache/celeborn` Docker image are built with `-Paws`. Their AWS SDK supports EKS Pod Identity credentials.
 
 To build Celeborn with Aliyun OSS support MPU, please use the following command
 ```shell
