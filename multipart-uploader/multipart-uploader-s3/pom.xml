@@ -61,6 +61,18 @@
         </exclusion>
       </exclusions>
     </dependency>
+    <!-- S3AFileSystem loads the transfer manager's classes when it initializes. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3-transfer-manager</artifactId>
+      <version>${aws.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
     <!-- Needed for software.amazon.awssdk.auth.credentials.WebIdentityTokenFileCredentialsProvider -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>

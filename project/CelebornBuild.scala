@@ -139,6 +139,9 @@ object Dependencies {
   // The S3 clients use the Apache HTTP client; the Netty one would bring a second Netty.
   val awsS3 = "software.amazon.awssdk" % "s3" % awsSdkVersion excludeAll (
     ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
+  // S3AFileSystem loads the transfer manager's classes when it initializes.
+  val awsS3TransferManager = "software.amazon.awssdk" % "s3-transfer-manager" % awsSdkVersion excludeAll (
+    ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
   // Needed for software.amazon.awssdk.auth.credentials.WebIdentityTokenFileCredentialsProvider
   val awsSTS = "software.amazon.awssdk" % "sts" % awsSdkVersion excludeAll (
     ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
@@ -652,7 +655,7 @@ object CelebornSpi {
 
 object CeleborMPU {
 
-  lazy val hadoopAwsDependencies = Seq(Dependencies.hadoopAws, Dependencies.awsS3, Dependencies.awsSTS)
+  lazy val hadoopAwsDependencies = Seq(Dependencies.hadoopAws, Dependencies.awsS3, Dependencies.awsS3TransferManager, Dependencies.awsSTS)
   lazy val hadoopAliyunDependencies = Seq(Dependencies.commonsCollections, Dependencies.hadoopAliyun, Dependencies.aliyunOss)
 
   lazy val celeborMPU = Project("celeborn-multipart-uploader-s3", file("multipart-uploader/multipart-uploader-s3"))
