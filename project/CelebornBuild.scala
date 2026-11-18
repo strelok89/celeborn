@@ -134,8 +134,7 @@ object Dependencies {
     ExclusionRule("org.slf4j", "slf4j-log4j12"))
   // hadoop-aws depends on the whole AWS SDK v2 bundle; Celeborn ships only the modules it uses.
   val hadoopAws = "org.apache.hadoop" % "hadoop-aws" % hadoopVersion excludeAll (
-    ExclusionRule("software.amazon.awssdk", "bundle"),
-    ExclusionRule("software.amazon.s3.analyticsaccelerator", "analyticsaccelerator-s3"))
+    ExclusionRule("software.amazon.awssdk", "bundle"))
   // The S3 clients use the Apache HTTP client; the Netty one would bring a second Netty.
   val awsS3 = "software.amazon.awssdk" % "s3" % awsSdkVersion excludeAll (
     ExclusionRule("software.amazon.awssdk", "netty-nio-client"))
